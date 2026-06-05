@@ -22,3 +22,4 @@ memory/session_*.json
 memory/user_profiles.json
 memory/session_webfix.json
 .hermes/
+telegram_poller.lock
