@@ -131,7 +131,6 @@ Steps:
 1. Destructive order actions: cancel/delete/charge → require explicit confirmation.
 2. Auth/balance/out-of-stock/tracking.
 3. Order ID + mockup intent → `create_mockup_from_order`.
-4. Uploaded design exists + product + mockup intent → `create_mockup_from_uploaded_design`.
 5. Product + mockup intent, no design/order → `create_mockup_from_product`.
 6. Product view/info intent only → product lookup.
 7. Otherwise free chat/clarify.

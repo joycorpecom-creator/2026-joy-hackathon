@@ -208,11 +208,6 @@ a{color:var(--accent);text-decoration:none}
    <label class="upload-btn" title="Upload design file (PNG/JPG/SVG)" onclick="document.getElementById('fileInput').click()">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
    </label>
-   <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,.svg" style="display:none" onchange="uploadDesign(event)">
-   <div id="designChip" class="design-chip" style="display:none">
-    <span id="designChipName"></span>
-    <button onclick="clearDesign()" class="chip-remove">×</button>
-   </div>
    <textarea id="userInput" rows="1" placeholder="e.g. Get order DEMO-1001 and create a cozy cafe girl lifestyle mockup..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
    <button class="btn-send" onclick="sendMessage()" id="sendBtn">Send</button>
   </div>
@@ -330,7 +325,6 @@ a{color:var(--accent);text-decoration:none}
 // ── STATE ──
 let chatHistory = [];
 let currentSettings = {};
-let currentDesign = null;
 const CHAT_ID = 'web';
 
 // ── INIT ──
@@ -352,33 +346,6 @@ async function init() {
   } catch(e) { console.error('init err', e) }
 }
 init();
-
-// ── DESIGN UPLOAD ──
-async function uploadDesign(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  const form = new FormData();
-  form.append('file', file);
-  form.append('chat_id', CHAT_ID);
-  try {
-    let r = await fetch('/api/upload-design', {method:'POST', body:form});
-    let d = await r.json();
-    if (d.ok) {
-      currentDesign = d.design;
-      document.getElementById('designChipName').textContent = file.name.substring(0,30);
-      document.getElementById('designChip').style.display = 'flex';
-      addMessage('user', `Upload design: ${file.name}`);
-    } else {
-      addMessage('bot', `Upload error: ${d.error}`);
-    }
-  } catch(e) { addMessage('bot', `Upload failed: ${e.message}`) }
-  e.target.value = '';
-}
-
-function clearDesign() {
-  currentDesign = null;
-  document.getElementById('designChip').style.display = 'none';
-}
 
 // ── CHAT ──
 let loading = false;
@@ -478,8 +445,6 @@ function addToHistory(msg) {
 async function newChat() {
   document.getElementById('chatInner').innerHTML = `<div class="empty-state"><div class="slogan-mark">JOURNEY<br>OF YOU</div></div>`;
   chatHistory = [];
-  currentDesign = null;
-  document.getElementById('designChip').style.display = 'none';
   try {
     await fetch('/api/chat', {
       method: 'POST',

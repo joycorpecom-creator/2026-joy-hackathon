@@ -9,7 +9,6 @@ import requests
 
 from config_store import load_settings
 from core import handle_message
-from design_store import save_design
 
 ROOT = Path(__file__).parent
 
@@ -59,54 +58,10 @@ def allowed_chat(token: str, chat_id: int, allowed: str) -> bool:
     return str(chat_id) == allowed
 
 
-def download_telegram_file(token: str, file_id: str) -> tuple[bytes, str]:
-    """Download file from Telegram. Returns (bytes, mime_type)."""
-    r = requests.post(f"https://api.telegram.org/bot{token}/getFile", json={"file_id": file_id}, timeout=15)
-    data = r.json()
-    if not data.get("ok"):
-        raise RuntimeError(f"getFile failed: {data}")
-    file_path = data["result"]["file_path"]
-    url = f"https://api.telegram.org/file/bot{token}/{file_path}"
-    r2 = requests.get(url, timeout=120)
-    r2.raise_for_status()
-    mime = r2.headers.get("content-type", "").split(";")[0].strip()
-    return r2.content, mime
 
 
 async def process_message(token: str, chat_id: int, text: str, msg: dict = None):
-    # ── File upload handling ──
-    if msg:
-        photo = msg.get("photo")
-        document = msg.get("document")
-        file_bytes = None
-        file_name = ""
-        mime = ""
-        if photo:
-            best = max(photo, key=lambda p: p.get("file_size", 0))
-            file_bytes, mime = download_telegram_file(token, best["file_id"])
-            file_name = f"telegram_{best['file_id'][:10]}.jpg"
-        elif document:
-            d = document
-            mime = d.get("mime_type", "")
-            ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg", "image/svg+xml": ".svg"}.get(mime, "")
-            if ext:
-                file_name = d.get("file_name") or f"design_{d['file_id'][:10]}{ext}"
-                file_bytes, _ = download_telegram_file(token, d["file_id"])
-        if file_bytes:
-            try:
-                meta = save_design(
-                    chat_id=str(chat_id),
-                    file_bytes=file_bytes,
-                    original_filename=file_name,
-                    mime=mime,
-                )
-                send_text(token, chat_id, f"Dạ em nhận được file in rồi ({meta['width']}×{meta['height']}). Anh muốn lên sản phẩm nào và bối cảnh gì?")
-            except Exception as e:
-                send_text(token, chat_id, f"Dạ em không đọc được file: {e}")
-                return
-            if not text:
-                return  # wait for text prompt separately
-
+    # File upload is intentionally disabled; stable flows are order/product only.
     if text.startswith("/start"):
         send_text(token, chat_id, "Dạ J_agent online. Anh gửi Order ID + mô tả scene, em tạo mockup nhé.")
         return
@@ -127,7 +82,7 @@ async def process_message(token: str, chat_id: int, text: str, msg: dict = None)
         warnings = meta.get("warnings") or []
         warn_text = ""
         if warnings:
-            warn_text = "\nNote: input nên là flat PNG/document để giữ nền trong suốt."
+            warn_text = ""
         caption = (
             f"Mockup ready\n"
             f"Order: {meta.get('order','?')}\n"

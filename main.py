@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -99,34 +99,6 @@ async def chat(req: Request):
         return JSONResponse(d)
     except Exception as e:
         return JSONResponse({"type": "error", "content": str(e)})
-
-
-@app.post("/api/upload-design")
-async def upload_design(file: UploadFile = File(...), chat_id: str = Form("web")):
-    """Upload print design file (PNG/JPG/SVG) and remember it for chat session."""
-    from design_store import save_design
-    if not file.filename:
-        return JSONResponse({"ok": False, "error": "Missing filename"}, status_code=400)
-    name = file.filename.lower()
-    if not name.endswith((".png", ".jpg", ".jpeg", ".svg")):
-        return JSONResponse({"ok": False, "error": "Only PNG/JPG/SVG supported"}, status_code=400)
-    data = await file.read()
-    if not data:
-        return JSONResponse({"ok": False, "error": "Empty file"}, status_code=400)
-    if len(data) > 25 * 1024 * 1024:
-        return JSONResponse({"ok": False, "error": "File too large; max 25MB"}, status_code=400)
-    try:
-        meta = save_design(chat_id=str(chat_id or "web"), file_bytes=data, original_filename=file.filename, mime=file.content_type or "")
-        return JSONResponse({"ok": True, "message": "Design uploaded", "design": meta})
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-
-
-@app.get("/api/session-design/{chat_id}")
-async def session_design(chat_id: str):
-    from design_store import get_current_design
-    meta = get_current_design(str(chat_id or "web"))
-    return JSONResponse({"ok": bool(meta), "design": meta})
 
 
 # ── SERVE OUTPUTS ──

@@ -6,4 +6,5 @@ Rules:
 - Do not edit generated/runtime noise: `__pycache__/`, `.git/`, `outputs/`, `assets/`, `uploads/`, `memory/` unless task explicitly targets them.
 - Keep `settings.json` secrets masked in reports.
 - For BurgerPrints product calls, use catalog `short_code` (e.g. `USG5000`), not dashboard IDs (`A60992-*`).
-- `/new` must reset agent session, design store, and transient memory state.
+- `/new` must reset agent session and transient memory state.
+- Upload-design/product-phôi mockup flow is intentionally disabled; stable flows only: BP product info, order info, order mockup.

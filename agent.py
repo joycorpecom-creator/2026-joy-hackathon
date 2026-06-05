@@ -16,7 +16,7 @@ from google.genai import types
 
 from config_store import load_settings
 from burgerprints import BurgerPrintsClient
-from mockup_engine import generate_mockup, generate_product_mockup, generate_uploaded_design_product_mockup
+from mockup_engine import generate_mockup, generate_product_mockup
 
 ROOT = Path(__file__).parent
 MEMORY_DIR = ROOT / "memory"
@@ -119,18 +119,6 @@ TOOL_DECLARATIONS = types.Tool(
                 "required": ["short_code", "scene"],
             },
         ),
-        types.FunctionDeclaration(
-            name="create_mockup_from_uploaded_design",
-            description="Tạo lifestyle mockup từ file in user đã upload + sản phẩm BP catalog. Dùng khi session hiện tại đã có design file.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "short_code": {"type": "string", "description": "Mã sản phẩm BP, VD USG5000"},
-                    "scene": {"type": "string", "description": "Bối cảnh/mood/style, VD đường phố New York"},
-                },
-                "required": ["short_code", "scene"],
-            },
-        ),
         # ── Memory ──
         types.FunctionDeclaration(
             name="memory_save_profile",
@@ -176,7 +164,6 @@ PHÂN BIỆT 3 NHÓM Ý ĐỊNH BẮT BUỘC:
    - Ví dụ: "tạo hình ảnh mockup sản phẩm XXX với phong cách A,B,C".
    - User chưa đưa order_id. Nguồn là base mockup/catalog product BP.
    - Hành động: bp_search_products → create_mockup_from_product.
-   - Nếu session đã có design file user upload: dùng create_mockup_from_uploaded_design thay vì create_mockup_from_product.
 
 3) TẠO MOCKUP TỪ ORDER_ID CÓ SẴN
    - Ví dụ: "tạo mockup của sản phẩm với order_id XX với phong cách A".
@@ -479,14 +466,6 @@ class BurgerMockupAgent:
             if name == "create_mockup_from_product":
                 sc = args.get("short_code", "")
                 scene = args.get("scene", "")
-                # Safety: if user uploaded a print design in this chat, product-only
-                # mockup is the wrong branch. Force design-preserving pipeline.
-                try:
-                    from design_store import get_current_design
-                    if get_current_design(self._current_chat_id):
-                        return self._execute_tool("create_mockup_from_uploaded_design", {"short_code": sc, "scene": scene})
-                except Exception:
-                    pass
                 try:
                     r = self.bp.product(sc)
                 except Exception:
@@ -557,97 +536,6 @@ class BurgerMockupAgent:
                     **sync_info,
                 }
 
-            if name == "create_mockup_from_uploaded_design":
-                sc = args.get("short_code", "")
-                scene = args.get("scene", "")
-                from design_store import get_current_design
-                chat_id = self._current_chat_id
-                design = get_current_design(chat_id)
-                if not design:
-                    return {"error": "Chưa có file in nào trong session. Anh upload file PNG/JPG/SVG trước nha."}
-                design_path = design.get("normalized_path") or design.get("source_path")
-                if not design_path or not Path(design_path).exists():
-                    return {"error": "File in không tìm thấy trên server, upload lại giúp anh."}
-                # Resolve product
-                try:
-                    r = self.bp.product(sc)
-                except Exception:
-                    from action_router import _fuzzy_find_product
-                    resolved = _fuzzy_find_product(sc, self.bp)
-                    if resolved:
-                        sc = resolved
-                        r = self.bp.product(sc)
-                    else:
-                        return {"error": f"Không tìm thấy sản phẩm '{sc}'"}
-                d = r.get("data", r)
-                pname = d.get("display_name") or d.get("name", sc)
-                pcolor = d.get("color_name") or d.get("color") or ""
-                t0 = time.time()
-                result = generate_uploaded_design_product_mockup(
-                    design_path=design_path,
-                    product=d,
-                    scene_prompt=scene,
-                    short_code=sc,
-                    product_name=pname,
-                    color_name=pcolor,
-                )
-                elapsed = round(time.time() - t0, 2)
-                # Sync final accepted mockup to LarkBase/n8n (same as product branch).
-                sync_info = {"sync_status": "skipped"}
-                try:
-                    from imgbb_uploader import upload_image
-                    from sync_webhook import build_mockup_payload, post_mockup_created
-                    local_path = result.get("path", "")
-                    imgbb_result = upload_image(local_path) if local_path else {"ok": False, "error": "missing local path"}
-                    public_img_url = imgbb_result.get("url") or imgbb_result.get("display_url") or ""
-                    sync_payload = build_mockup_payload(
-                        result=result,
-                        product_id=sc,
-                        product_name=pname,
-                        color=pcolor,
-                        scene=scene,
-                        raw_user_input=scene,
-                        public_base_url=self.settings.get("public_base_url", ""),
-                    )
-                    sync_payload.setdefault("assets", {})["design_id"] = design["design_id"]
-                    if public_img_url:
-                        sync_payload["assets"]["image_url"] = public_img_url
-                        sync_payload["assets"]["imgbb_url"] = public_img_url
-                        sync_payload["assets"]["imgbb_delete_url"] = imgbb_result.get("delete_url", "")
-                    try:
-                        from lark_media_sync import _load_config, _get_tenant_token, _upload_to_base_media
-                        lcfg = _load_config()
-                        ltoken = _get_tenant_token(lcfg["app_id"], lcfg["app_secret"], lcfg["lark_base_url"])
-                        media = _upload_to_base_media(local_path, lcfg["base_token"], ltoken, lcfg["lark_base_url"], result.get("filename") or Path(local_path).name)
-                        if media.get("file_token"):
-                            sync_payload["assets"]["lark_file_token"] = media["file_token"]
-                    except Exception as e:
-                        sync_payload["assets"]["lark_media_error"] = str(e)
-                    sync_result = post_mockup_created(sync_payload, self.settings)
-                    sync_info = {
-                        "sync_status": sync_result.get("status", "skipped"),
-                        "sync_record_id": sync_result.get("record_id", ""),
-                        "sync_image_url": public_img_url,
-                    }
-                    if imgbb_result.get("error"):
-                        sync_info["imgbb_error"] = str(imgbb_result["error"])
-                    if sync_result.get("error"):
-                        sync_info["sync_error"] = str(sync_result["error"])
-                except Exception as e:
-                    sync_info = {"sync_status": "failed", "sync_error": str(e)}
-                return {
-                    "mockup_url": f"/outputs/{result['path'].split('/')[-1]}",
-                    "provider": result["provider"],
-                    "size": f"{result['width']}×{result['height']}",
-                    "integrity": result["integrity_score"],
-                    "time": f"{elapsed}s",
-                    "cost": f"${result['cost_usd']}",
-                    "product": f"{sc} — {pname}",
-                    "color": pcolor,
-                    "design_id": design["design_id"],
-                    **sync_info,
-                }
-
             if name == "memory_save_profile":
                 import burger_memory as mem
                 key = str(args.get("key", "")).strip()
@@ -710,12 +598,6 @@ class BurgerMockupAgent:
 
         # Create a copy for this turn's tool-calling loop
         turn_history = list(history)
-        # Dynamic session state: makes uploaded print design explicit to LLM.
-        try:
-            from design_store import get_current_design
-            design = get_current_design(str(chat_id))
-        except Exception:
-            design = None
         # ── PRE-ROUTER: deterministic product-info extraction ──
         # Only kicks in for unambiguous "view product info" intent.
         # Everything else (mockup, auth, balance, orders, chat) → LLM.
@@ -757,27 +639,11 @@ class BurgerMockupAgent:
             pass
         try:
             import burger_memory as mem
-            if design:
-                mem.update_state(str(chat_id), {
-                    "current_design_id": design.get("design_id"),
-                    "current_design_path": design.get("normalized_path"),
-                    "current_design_warnings": design.get("validation_warnings"),
-                })
             mem_ctx = mem.build_memory_context(str(chat_id), message)
             turn_history.append(types.Content(role="user", parts=[types.Part.from_text(text=mem_ctx)]))
         except Exception:
             pass
 
-        if design:
-            turn_history.append(types.Content(role="user", parts=[types.Part.from_text(text=(
-                "CURRENT_SESSION:\n"
-                f"- uploaded_design: yes\n"
-                f"- design_id: {design.get('design_id')}\n"
-                f"- validation_warnings: {design.get('validation_warnings', [])}\n"
-                "- uploaded file is the PRINT DESIGN, not product photo\n"
-                "- for any mockup/product/scene request MUST call create_mockup_from_uploaded_design\n"
-                "- do NOT call create_mockup_from_product while uploaded_design=yes"
-            ))]))
         turn_history.append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
 
         max_rounds = 5
@@ -856,7 +722,7 @@ class BurgerMockupAgent:
 
             # Check if the last tool call was a mockup — if so, return it directly
             last_fc, result = executed_results[-1]
-            if last_fc.name in ("create_mockup_from_order", "create_mockup_from_product", "create_mockup_from_uploaded_design"):
+            if last_fc.name in ("create_mockup_from_order", "create_mockup_from_product"):
                 if result.get("error"):
                     final_text = f"Dạ, có lỗi khi tạo mockup: {result['error']}"
                     history.append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
@@ -923,13 +789,8 @@ class BurgerMockupAgent:
                 # If message asks mockup/create/style or uploaded design exists, let LLM continue
                 # to create_mockup_from_* in the next tool round.
                 tmsg = message.lower()
-                wants_mockup_final = any(k in tmsg for k in ["mockup", "tạo", "hình ảnh", "phong cách", "style", "scene", "file in", "đính kèm"])
-                try:
-                    from design_store import get_current_design
-                    has_uploaded_design_final = bool(get_current_design(str(chat_id)))
-                except Exception:
-                    has_uploaded_design_final = False
-                if wants_mockup_final or has_uploaded_design_final:
+                wants_mockup_final = any(k in tmsg for k in ["mockup", "tạo", "hình ảnh", "phong cách", "style", "scene"])
+                if wants_mockup_final:
                     continue
                 code = result.get("short_code") or result.get("code") or ""
                 name_val = result.get("name") or ""

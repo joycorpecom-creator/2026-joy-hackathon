@@ -24,11 +24,6 @@ async def handle_message(msg: str, chat_id: str = "web") -> Dict[str, Any]:
         agent = get_agent()
         agent.clear_session(cid)
         try:
-            from design_store import clear_design
-            clear_design(cid)
-        except Exception:
-            pass
-        try:
             import burger_memory as mem
             path = mem.state_path(cid)
             if path.exists():
@@ -37,7 +32,7 @@ async def handle_message(msg: str, chat_id: str = "web") -> Dict[str, Any]:
             pass
         return {
             "type": "text",
-            "content": "Dạ anh, em đã mở đoạn chat mới. Context cũ, file in đang giữ và trạng thái tạm đã được reset."
+            "content": "Dạ anh, em đã mở đoạn chat mới. Context cũ và trạng thái tạm đã được reset."
         }
 
     agent = get_agent()

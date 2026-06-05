@@ -21,7 +21,6 @@
 |------|------|------|
 | Web UI | `main.py` → `python main.py` | `8000` |
 | Chat API | `POST /api/chat` | `8000` |
-| Upload API | `POST /api/upload-design` | `8000` |
 | Live logs | `GET /logs/agent` | `8000` |
 | Agent core | `agent.py` — Gemini tool-calling loop | — |
 | Telegram | `telegram_poller.py` (optional) | — |
@@ -51,8 +50,6 @@
 | `mockup_engine.py` | Orchestration: design upload validate → generate scene → composite → integrity |
 | `design_compositor.py` | Deterministic composite, perspective warp, blend |
 | `integrity.py` | SSIM gate (flat >0.92, lifestyle >0.85) |
-| `design_normalizer.py` | Solid bg removal, alpha cleanup, crop |
-| `design_store.py` | Per-session upload persistence |
 
 ### Memory / State
 | File | Owns |

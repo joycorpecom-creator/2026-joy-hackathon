@@ -25,8 +25,6 @@ FastAPI (main.py) ─── static/ (HTML/CSS/JS frontend)
     ├── mockup_engine.py   ← mockup generation pipeline
     │    ├── product_layout.py   ← bbox heuristics
     │    ├── design_compositor.py ← Pillow + OpenCV warp
-    │    ├── design_store.py     ← file upload manager
-    │    ├── design_normalizer.py ← trim/crop/margin
     │    ├── image_preprocess.py ← product cutout (rembg)
     │    ├── integrity.py        ← SSIM gate
     │    ├── providers.py        ← Gemini image generator
@@ -58,8 +56,6 @@ File chạy chính. Routes:
 | POST | `/api/test-burgerprints` | test BP key |
 | POST | `/api/test-llm` | test Gemini key |
 | POST | `/api/chat` | nhận message → `handle_message()` |
-| POST | `/api/upload-design` | upload design file |
-| GET | `/api/session-design/{chat_id}` | current design meta |
 | GET | `/outputs/{filename}` | serve generated images |
 | GET | `/api/logs/agent` | agent log tail |
 | POST | `/webhook/larkbase/commands` | Lark Base ingress |
@@ -213,13 +209,7 @@ Actions: `auth`, `balance`, `tracking`, `cancel`, `delete`, `charge`, `out_of_st
 | `record_turn()` | log user ↔ assistant turn |
 | `record_mockup()` | log mockup generation |
 
-### 12. `design_store.py` (138 dòng) — Upload manager
-
-- Saves to `uploads/{chat_id}/{hash}_src.{ext}`
-- SVG → PNG conversion via `cairosvg`
-- Normalize via `design_normalizer.normalize_design_file()`
-
-### 13. `telegram_poller.py` — Polling bot
+### 12. `telegram_poller.py` — Polling bot
 
 - `getUpdates` polling loop
 - Handles `/new`, text, photo/document upload
@@ -244,7 +234,6 @@ Actions: `auth`, `balance`, `tracking`, `cancel`, `delete`, `charge`, `out_of_st
 | `bp_cancel_order` | cancel order (confirm gate) |
 | `create_mockup_from_order` | order + scene → mockup |
 | `create_mockup_from_product` | product + scene → mockup |
-| `create_mockup_from_uploaded_design` | design + product + scene → mockup |
 | `memory_save_profile` | user preference |
 | `memory_search` | past mockup/prompt recall |
 | `memory_get_profile` | get saved profile |
@@ -265,7 +254,7 @@ User message
       → load session history (JSON)
       → Gemini + 19 tools
       → _execute_tool(name, args)
-        → BurgerPrintsClient / mockup_engine / design_store / burger_memory
+        → BurgerPrintsClient / mockup_engine / burger_memory
       → loop until final response
       → format text + optional image path
       → save history
@@ -281,7 +270,7 @@ User message
 - `memory/` — per-session JSON dumps (state, user_profiles, session_*)
 - `outputs/` — generated images (~50 PNGs)
 - `assets/` — cached BP images (~15 PNGs)
-- `uploads/` — uploaded designs (SVG, PNG, meta JSON)
+- `uploads/` — legacy uploaded designs; disabled flow
 - `templates/mockup/` — prompt templates (Markdown)
 
 ---
@@ -306,13 +295,13 @@ Settings file: `/root/joy-dnse/settings.json` (không trong git)
 1. **Agent context chưa state machine rõ** — 19 tools flat, không slot filling.
 2. **Gemini deprecated model** — `gemini-2.0-flash` hết hạn, đang dùng `gemini-3-flash-preview`.
 3. **Print area heuristic** — `infer_print_bbox()` fallback shirt (0.34/0.34/0.32/0.34) có thể sai cho product lạ.
-4. **No async job queue** — generation synchronous, dễ timeout.
-5. **Memory tách rời** — `burger_memory.py` SQLite + `agent.py` JSON history, không unified.
-6. **Settings JSON + .env dual** — source of truth: settings.json. .env chỉ fallback.
-7. **Telegram polling** — không webhook, dùng getUpdates.
-8. **No test suite đủ** — chỉ có `test_new_command.py` + `test_burgerprints_api.py`.
-9. **Product template chỉ heuristic** — không template JSON riêng cho từng short_code.
-10. **SSIM threshold cứng** — 0.92 flat, 0.85 lifestyle. Chưa configurable.
+4. **Upload-design flow disabled** — chỉ giữ product/order/order-mockup ổn định.
+5. **No async job queue** — generation synchronous, dễ timeout.
+6. **Memory tách rời** — `burger_memory.py` SQLite + `agent.py` JSON history, không unified.
+7. **Settings JSON + .env dual** — source of truth: settings.json. .env chỉ fallback.
+8. **Telegram polling** — không webhook, dùng getUpdates.
+9. **No test suite đủ** — chỉ có `test_new_command.py` + `test_burgerprints_api.py`.
+10. **Product template chỉ heuristic** — không template JSON riêng cho từng short_code.
 
 ### File nào không sửa nếu chỉ patch nhẹ
 
@@ -331,7 +320,7 @@ find . -type f -name "*.py" ! -path "./__pycache__/*" | sort
 # App file sizes
 wc -l main.py agent.py core.py burgerprints.py mockup_engine.py \
       action_router.py config_store.py design_compositor.py \
-      design_store.py integrity.py product_layout.py providers.py \
+      integrity.py product_layout.py providers.py \
       image_preprocess.py burger_memory.py telegram_poller.py \
       sync_webhook.py lark_media_sync.py context_loader.py
 # Running processes
