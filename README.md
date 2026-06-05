@@ -8,23 +8,27 @@ From a flat product/design prompt to listing-ready lifestyle mockups, then sync 
 
 - Conversational mockup agent, not a static upload form.
 - Uses BurgerPrints API v2 catalog/product data.
-- Uses Gemini image generation for lifestyle mockups.
-- Shows generated images in the web UI.
-- Uploads generated image to imgbb for a stable HTTPS preview URL.
-- Uploads generated file to Lark media, then sends metadata to n8n.
-- n8n creates a Lark Base record and appends the attachment token.
+- Upload plain design file (PNG/JPG/SVG) + describe scene by chat.
+- **Design-first composite pipeline**: original design never redrawn by AI.
+- Uses Gemini for background/scene only; design composited with Pillow deterministically.
+- SSIM integrity gate validates design preservation.
+- Shows generated images in the web UI (≥1500×1500 px).
+- Syncs demo data to Lark Base through n8n (Lark media + webhook).
 
 Current demo flow:
 
 ```txt
-User prompt
-→ BurgerPrints product lookup
-→ Gemini generates PNG locally
-→ app uploads image to imgbb
-→ app uploads local PNG to Lark media, gets file_token
-→ app POSTs n8n webhook
-→ n8n creates Lark Base record
-→ n8n appends attachment using file_token
+Upload PNG/JPG/SVG
+  → agent remembers design in session
+  → ask for product + scene ("Gildan 5000 New York street")
+  → agent resolves BP short_code → GET /v2/product/{short_code}
+  → product_layout: pick base image + infer print area bbox
+  → design_compositor: composite original design onto product image
+  → integrity.compare_design_to_layer: flat SSIM check (>0.92 target)
+  → Gemini generates lifestyle background scene
+  → design_compositor: composite product+design into scene
+  → output 1600×1600 listed-ready mockup
+  → (optional) sync to Lark via n8n
 ```
 
 ## Local setup, ≤15 min

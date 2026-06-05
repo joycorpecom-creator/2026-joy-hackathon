@@ -16,7 +16,7 @@ from google.genai import types
 
 from config_store import load_settings
 from burgerprints import BurgerPrintsClient
-from mockup_engine import generate_mockup, generate_product_mockup
+from mockup_engine import generate_mockup, generate_product_mockup, generate_uploaded_design_product_mockup
 
 ROOT = Path(__file__).parent
 MEMORY_DIR = ROOT / "memory"
@@ -119,6 +119,18 @@ TOOL_DECLARATIONS = types.Tool(
                 "required": ["short_code", "scene"],
             },
         ),
+        types.FunctionDeclaration(
+            name="create_mockup_from_uploaded_design",
+            description="Tạo lifestyle mockup từ file in user đã upload + sản phẩm BP catalog. Dùng khi session hiện tại đã có design file.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "short_code": {"type": "string", "description": "Mã sản phẩm BP, VD USG5000"},
+                    "scene": {"type": "string", "description": "Bối cảnh/mood/style, VD đường phố New York"},
+                },
+                "required": ["short_code", "scene"],
+            },
+        ),
     ]
 )
 
@@ -136,6 +148,7 @@ LUẬT:
   → GỌI bp_search_products TRƯỚC để tìm short_code chính xác.
 - Khi user muốn tạo mockup + nói cả tên sản phẩm lẫn scene:
   → GỌI bp_search_products để lấy short_code → SAU ĐÓ gọi create_mockup_from_product.
+- KHI SESSION CÓ DESIGN FILE (user đã upload): ưu tiên gọi create_mockup_from_uploaded_design thay vì create_mockup_from_product.
 - Khi user chỉ đưa order ID + scene: gọi create_mockup_from_order luôn.
 - Khi user hỏi "số dư", "balance": gọi bp_balance.
 - Khi user hỏi "test api", "api ok": gọi bp_authenticated.
@@ -160,6 +173,7 @@ class BurgerMockupAgent:
         self._client: Optional[genai.Client] = None
         # Per-chat session memory: {chat_id: [Content, ...]}
         self.sessions: Dict[str, List[types.Content]] = {}
+        self._current_chat_id = "web"
         self._load_sessions()
 
     @property
@@ -398,6 +412,53 @@ class BurgerMockupAgent:
                     **sync_info,
                 }
 
+            if name == "create_mockup_from_uploaded_design":
+                sc = args.get("short_code", "")
+                scene = args.get("scene", "")
+                from design_store import get_current_design
+                chat_id = self._current_chat_id
+                design = get_current_design(chat_id)
+                if not design:
+                    return {"error": "Chưa có file in nào trong session. Anh upload file PNG/JPG/SVG trước nha."}
+                design_path = design.get("normalized_path") or design.get("source_path")
+                if not design_path or not Path(design_path).exists():
+                    return {"error": "File in không tìm thấy trên server, upload lại giúp anh."}
+                # Resolve product
+                try:
+                    r = self.bp.product(sc)
+                except Exception:
+                    from action_router import _fuzzy_find_product
+                    resolved = _fuzzy_find_product(sc, self.bp)
+                    if resolved:
+                        sc = resolved
+                        r = self.bp.product(sc)
+                    else:
+                        return {"error": f"Không tìm thấy sản phẩm '{sc}'"}
+                d = r.get("data", r)
+                pname = d.get("display_name") or d.get("name", sc)
+                pcolor = d.get("color_name") or d.get("color") or ""
+                t0 = time.time()
+                result = generate_uploaded_design_product_mockup(
+                    design_path=design_path,
+                    product=d,
+                    scene_prompt=scene,
+                    short_code=sc,
+                    product_name=pname,
+                    color_name=pcolor,
+                )
+                elapsed = round(time.time() - t0, 2)
+                return {
+                    "mockup_url": f"/outputs/{result['path'].split('/')[-1]}",
+                    "provider": result["provider"],
+                    "size": f"{result['width']}×{result['height']}",
+                    "integrity": result["integrity_score"],
+                    "time": f"{elapsed}s",
+                    "cost": f"${result['cost_usd']}",
+                    "product": f"{sc} — {pname}",
+                    "color": pcolor,
+                    "design_id": design["design_id"],
+                }
+
             return {"error": f"Unknown tool: {name}"}
 
         except Exception as e:
@@ -413,6 +474,7 @@ class BurgerMockupAgent:
         if not self.llm_key or "..." in self.llm_key:
             return {"type": "text", "content": "Dạ, Gemini API key chưa được cấu hình anh ơi."}
 
+        self._current_chat_id = str(chat_id)
         history = self._get_history(chat_id)
 
         # Create a copy for this turn's tool-calling loop
@@ -490,7 +552,7 @@ class BurgerMockupAgent:
 
             # Check if the last tool call was a mockup — if so, return it directly
             last_fc, result = executed_results[-1]
-            if last_fc.name in ("create_mockup_from_order", "create_mockup_from_product"):
+            if last_fc.name in ("create_mockup_from_order", "create_mockup_from_product", "create_mockup_from_uploaded_design"):
                 print(">>> MOCKUP TOOL DETECTED, returning result", flush=True)
                 mockup_url = result.get("mockup_url", "")
                 provider = result.get("provider", "unknown")

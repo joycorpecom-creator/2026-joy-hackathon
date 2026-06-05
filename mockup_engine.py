@@ -2,7 +2,7 @@ import hashlib
 import os
 import time
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 import requests
@@ -11,6 +11,9 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageSeq
 from burgerprints import OrderAsset
 from providers import build_scene_prompt, try_generate_ai_scene, try_generate_lifestyle_mockup
 from prompts import build_product_mockup_prompt
+from product_layout import pick_base_image, infer_print_bbox
+from design_compositor import composite_design_on_product
+from integrity import compare_design_to_layer
 
 ROOT = Path(__file__).parent
 OUTPUT_DIR = ROOT / "outputs"
@@ -120,6 +123,74 @@ def composite_product_image(scene: Image.Image, product_path: Path) -> Image.Ima
     out.alpha_composite(shadow)
     out.alpha_composite(product, (x, y))
     return out.convert("RGB")
+
+
+def generate_uploaded_design_product_mockup(
+    design_path: str,
+    product: Dict,
+    scene_prompt: str,
+    *,
+    short_code: str = "",
+    product_name: str = "",
+    color_name: str = "",
+) -> dict:
+    """Create lifestyle mockup from uploaded print design + BP catalog product.
+
+    Core guarantee: design is composited deterministically after BP product lookup;
+    Gemini only provides scene/background. No AI redraw of design.
+    """
+    started = time.time()
+    short_code = short_code or product.get("short_code") or "PRODUCT"
+    product_name = product_name or product.get("display_name") or product.get("name") or short_code
+    color_name = color_name or product.get("color_name") or product.get("color") or "as shown"
+    base_url = pick_base_image(product)
+    if not base_url:
+        raise RuntimeError(f"Product has no base mockup image: {short_code}")
+
+    product_path = download_image(base_url)
+    base_img = Image.open(product_path).convert("RGBA")
+    bbox = infer_print_bbox(product, base_img.size)
+    product_with_design, placed_layer, placed_bbox = composite_design_on_product(base_img, design_path, bbox)
+
+    flat = compare_design_to_layer(design_path, placed_layer)
+
+    # Gemini background only. If unavailable, use deterministic scene.
+    bg_prompt = (
+        f"Photorealistic ecommerce lifestyle background for {product_name}. "
+        f"Scene: {scene_prompt}. No brand logos, no celebrity faces, no text, no watermark. "
+        "Leave clean central space for product overlay."
+    )
+    scene = try_generate_ai_scene(bg_prompt, "#f5f5f5")
+    provider = "gemini-background+deterministic-composite" if scene else "deterministic-composite"
+    if scene is None:
+        scene = make_scene(scene_prompt, "#f5f5f5")
+    if scene.width < 1500 or scene.height < 1500:
+        scene = scene.resize((1600, 1600), Image.LANCZOS)
+    else:
+        scene = scene.resize((1600, 1600), Image.LANCZOS)
+
+    from design_compositor import composite_product_into_scene
+    final, product_scene_bbox = composite_product_into_scene(scene, product_with_design)
+    if final.width < 1500 or final.height < 1500:
+        final = final.resize((1600, 1600), Image.LANCZOS)
+
+    name = f"uploaded_{_safe_name(short_code)}_{hashlib.sha1((str(design_path)+scene_prompt).encode()).hexdigest()[:8]}.png"
+    out_path = OUTPUT_DIR / name
+    final.save(out_path, "PNG")
+
+    return {
+        "path": str(out_path),
+        "filename": name,
+        "width": final.width,
+        "height": final.height,
+        "integrity_score": flat["score"],
+        "integrity_flat": flat,
+        "print_bbox": bbox,
+        "product_scene_bbox": product_scene_bbox,
+        "seconds": round(time.time() - started, 2),
+        "cost_usd": 0.0 if provider == "deterministic-composite" else round(0.08 * (final.width * final.height) / (1600 * 1600), 2),
+        "provider": provider,
+    }
 
 
 def generate_product_mockup(product_id: str, product_name: str, color_name: str, base_mockup_url: str, prompt: str) -> dict:

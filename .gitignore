@@ -12,6 +12,7 @@ venv/
 # generated media
 outputs/
 assets/
+uploads/
 
 # local archives
 *.zip
