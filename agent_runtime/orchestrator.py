@@ -8,7 +8,7 @@ from typing import Any, Dict
 import burger_memory as mem
 from .context_builder import build_context
 from .planner import Planner
-from .plan_schema import AgentPlan, INTENT_CONFIRM_PLAN, INTENT_EDIT_PLAN, INTENT_CANCEL, needs_confirmation, plan_display_text
+from .plan_schema import AgentPlan, INTENT_CONFIRM_PLAN, INTENT_EDIT_PLAN, INTENT_CANCEL, INTENT_HELP, INTENT_UNKNOWN, needs_confirmation, plan_display_text
 from .plan_validator import validate_plan, auto_fix_plan
 from .executor import Executor
 from .verifier import verify_mockup_result
@@ -37,6 +37,11 @@ class AgentOrchestrator:
         if plan.intent == INTENT_EDIT_PLAN:
             # Future: edit plan scenes
             return {"type": "text", "content": "Dạ anh muốn sửa scene nào? (vd: 'sửa ảnh 3 thành...')"}
+        if plan.intent == INTENT_HELP:
+            return {"type": "text", "content": "Dạ em là JOY Mockup Agent, chuyên tạo mockup lifestyle cho sản phẩm BurgerPrints. Anh có thể gửi order ID + mô tả scene, em sẽ tạo ảnh mockup cho anh ạ."}
+        if plan.intent == INTENT_UNKNOWN:
+            # Fall back to legacy LLM for chitchat / unhandled questions.
+            return self._agent.chat(cid, message)
         if plan.missing_fields:
             self._save_plan(cid, plan, "waiting_confirmation")
             return {"type": "text", "content": plan.clarifying_question or "Dạ anh cần thêm thông tin để em xử lý."}

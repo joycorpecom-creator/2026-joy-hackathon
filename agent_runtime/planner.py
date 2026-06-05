@@ -108,6 +108,8 @@ def deterministic_plan(message: str, context: Dict[str, Any]) -> AgentPlan:
         return AgentPlan(intent=INTENT_CANCEL, confidence=0.9, plan_id=plan_id, session_id=session_id, raw_message=text)
     if lower in ["hi", "hello", "chào", "xin chào"]:
         return AgentPlan(intent=INTENT_GREETING, confidence=0.9, plan_id=plan_id, session_id=session_id, raw_message=text)
+    if any(k in lower for k in ["bạn tên gì", "tên gì", "mày tên gì", "em tên gì", "who are you", "your name"]):
+        return AgentPlan(intent=INTENT_HELP, confidence=0.9, reason="identity_question", plan_id=plan_id, session_id=session_id, raw_message=text)
     if _has_list_order_intent(text) and not _has_mockup_intent(text):
         return AgentPlan(intent=INTENT_LIST_ORDERS, confidence=0.9, tool_plan=[ToolPlanStep(1, "list_orders", {})], plan_id=plan_id, session_id=session_id, raw_message=text)
 
