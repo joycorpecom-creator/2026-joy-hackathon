@@ -342,6 +342,14 @@ class BurgerMockupAgent:
             if name == "create_mockup_from_product":
                 sc = args.get("short_code", "")
                 scene = args.get("scene", "")
+                # Safety: if user uploaded a print design in this chat, product-only
+                # mockup is the wrong branch. Force design-preserving pipeline.
+                try:
+                    from design_store import get_current_design
+                    if get_current_design(self._current_chat_id):
+                        return self._execute_tool("create_mockup_from_uploaded_design", {"short_code": sc, "scene": scene})
+                except Exception:
+                    pass
                 try:
                     r = self.bp.product(sc)
                 except Exception:
@@ -447,6 +455,49 @@ class BurgerMockupAgent:
                     color_name=pcolor,
                 )
                 elapsed = round(time.time() - t0, 2)
+                # Sync final accepted mockup to LarkBase/n8n (same as product branch).
+                sync_info = {"sync_status": "skipped"}
+                try:
+                    from imgbb_uploader import upload_image
+                    from sync_webhook import build_mockup_payload, post_mockup_created
+                    local_path = result.get("path", "")
+                    imgbb_result = upload_image(local_path) if local_path else {"ok": False, "error": "missing local path"}
+                    public_img_url = imgbb_result.get("url") or imgbb_result.get("display_url") or ""
+                    sync_payload = build_mockup_payload(
+                        result=result,
+                        product_id=sc,
+                        product_name=pname,
+                        color=pcolor,
+                        scene=scene,
+                        raw_user_input=scene,
+                        public_base_url=self.settings.get("public_base_url", ""),
+                    )
+                    sync_payload.setdefault("assets", {})["design_id"] = design["design_id"]
+                    if public_img_url:
+                        sync_payload["assets"]["image_url"] = public_img_url
+                        sync_payload["assets"]["imgbb_url"] = public_img_url
+                        sync_payload["assets"]["imgbb_delete_url"] = imgbb_result.get("delete_url", "")
+                    try:
+                        from lark_media_sync import _load_config, _get_tenant_token, _upload_to_base_media
+                        lcfg = _load_config()
+                        ltoken = _get_tenant_token(lcfg["app_id"], lcfg["app_secret"], lcfg["lark_base_url"])
+                        media = _upload_to_base_media(local_path, lcfg["base_token"], ltoken, lcfg["lark_base_url"], result.get("filename") or Path(local_path).name)
+                        if media.get("file_token"):
+                            sync_payload["assets"]["lark_file_token"] = media["file_token"]
+                    except Exception as e:
+                        sync_payload["assets"]["lark_media_error"] = str(e)
+                    sync_result = post_mockup_created(sync_payload, self.settings)
+                    sync_info = {
+                        "sync_status": sync_result.get("status", "skipped"),
+                        "sync_record_id": sync_result.get("record_id", ""),
+                        "sync_image_url": public_img_url,
+                    }
+                    if imgbb_result.get("error"):
+                        sync_info["imgbb_error"] = str(imgbb_result["error"])
+                    if sync_result.get("error"):
+                        sync_info["sync_error"] = str(sync_result["error"])
+                except Exception as e:
+                    sync_info = {"sync_status": "failed", "sync_error": str(e)}
                 return {
                     "mockup_url": f"/outputs/{result['path'].split('/')[-1]}",
                     "provider": result["provider"],
@@ -457,6 +508,7 @@ class BurgerMockupAgent:
                     "product": f"{sc} — {pname}",
                     "color": pcolor,
                     "design_id": design["design_id"],
+                    **sync_info,
                 }
 
             return {"error": f"Unknown tool: {name}"}
@@ -479,6 +531,21 @@ class BurgerMockupAgent:
 
         # Create a copy for this turn's tool-calling loop
         turn_history = list(history)
+        # Dynamic session state: makes uploaded print design explicit to LLM.
+        try:
+            from design_store import get_current_design
+            design = get_current_design(str(chat_id))
+        except Exception:
+            design = None
+        if design:
+            turn_history.append(types.Content(role="user", parts=[types.Part.from_text(text=(
+                "CURRENT_SESSION:\n"
+                f"- uploaded_design: yes\n"
+                f"- design_id: {design.get('design_id')}\n"
+                "- uploaded file is the PRINT DESIGN, not product photo\n"
+                "- for any mockup/product/scene request MUST call create_mockup_from_uploaded_design\n"
+                "- do NOT call create_mockup_from_product while uploaded_design=yes"
+            ))]))
         turn_history.append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
 
         max_rounds = 5

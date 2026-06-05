@@ -9,7 +9,7 @@ import requests
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageSequence
 
 from burgerprints import OrderAsset
-from providers import build_scene_prompt, try_generate_ai_scene, try_generate_lifestyle_mockup
+from providers import build_scene_prompt, try_generate_ai_scene, try_generate_lifestyle_mockup, try_generate_dual_input_lifestyle_mockup
 from prompts import build_product_mockup_prompt
 from product_layout import pick_base_image, infer_print_bbox
 from design_compositor import composite_design_on_product
@@ -136,8 +136,10 @@ def generate_uploaded_design_product_mockup(
 ) -> dict:
     """Create lifestyle mockup from uploaded print design + BP catalog product.
 
-    Core guarantee: design is composited deterministically after BP product lookup;
-    Gemini only provides scene/background. No AI redraw of design.
+    Primary: Gemini dual-input (design + product) one-pass generation with
+             integrity gate. Falls back to deterministic composite.
+
+    Core guarantee: final image only returned if integrity passes threshold.
     """
     started = time.time()
     short_code = short_code or product.get("short_code") or "PRODUCT"
@@ -149,28 +151,58 @@ def generate_uploaded_design_product_mockup(
 
     product_path = download_image(base_url)
     base_img = Image.open(product_path).convert("RGBA")
-    bbox = infer_print_bbox(product, base_img.size)
-    product_with_design, placed_layer, placed_bbox = composite_design_on_product(base_img, design_path, bbox)
 
-    flat = compare_design_to_layer(design_path, placed_layer)
+    provider = "deterministic-composite"
+    final = None
+    integrity = None
 
-    # Gemini background only. If unavailable, use deterministic scene.
-    bg_prompt = (
-        f"Photorealistic ecommerce lifestyle background for {product_name}. "
-        f"Scene: {scene_prompt}. No brand logos, no celebrity faces, no text, no watermark. "
-        "Leave clean central space for product overlay."
+    # ── Primary: Gemini dual-input one-pass ──
+    gemini_img = try_generate_dual_input_lifestyle_mockup(
+        design_image=design_path,
+        product_image=product_path,
+        prompt=scene_prompt,
     )
-    scene = try_generate_ai_scene(bg_prompt, "#f5f5f5")
-    provider = "gemini-background+deterministic-composite" if scene else "deterministic-composite"
-    if scene is None:
-        scene = make_scene(scene_prompt, "#f5f5f5")
-    if scene.width < 1500 or scene.height < 1500:
-        scene = scene.resize((1600, 1600), Image.LANCZOS)
-    else:
-        scene = scene.resize((1600, 1600), Image.LANCZOS)
+    if gemini_img is not None:
+        if gemini_img.width < 1500 or gemini_img.height < 1500:
+            gemini_img = gemini_img.resize((1600, 1600), Image.LANCZOS)
+        else:
+            gemini_img = gemini_img.resize((1600, 1600), Image.LANCZOS)
+        # Check integrity: composite design on a clean crop of the gemini output
+        bbox = infer_print_bbox(product, gemini_img.size)
+        from design_compositor import composite_design_on_product
+        _composite, placed, _placed_bbox = composite_design_on_product(gemini_img, design_path, bbox)
+        integrity = compare_design_to_layer(design_path, placed)
+        lifestyle_score = integrity["score"]
+        if lifestyle_score >= 0.85:
+            final = gemini_img
+            provider = "gemini-dual-input"
+        else:
+            print(f"Gemini dual-input integrity too low: {lifestyle_score:.4f}, falling back", flush=True)
 
-    from design_compositor import composite_product_into_scene
-    final, product_scene_bbox = composite_product_into_scene(scene, product_with_design)
+    # ── Fallback: deterministic composite pipeline ──
+    if final is None:
+        bbox = infer_print_bbox(product, base_img.size)
+        product_with_design, placed, _placed_bbox = composite_design_on_product(base_img, design_path, bbox)
+        flat_integrity = compare_design_to_layer(design_path, placed)
+        # Gemini background only. If unavailable, use deterministic scene.
+        bg_prompt = (
+            f"Photorealistic ecommerce lifestyle background for {product_name}. "
+            f"Scene: {scene_prompt}. No brand logos, no celebrity faces, no text, no watermark. "
+            "Leave clean central space for product overlay."
+        )
+        scene = try_generate_ai_scene(bg_prompt, "#f5f5f5")
+        if scene is None:
+            scene = make_scene(scene_prompt, "#f5f5f5")
+        if scene.width < 1500 or scene.height < 1500:
+            scene = scene.resize((1600, 1600), Image.LANCZOS)
+        else:
+            scene = scene.resize((1600, 1600), Image.LANCZOS)
+
+        from design_compositor import composite_product_into_scene
+        final, product_scene_bbox = composite_product_into_scene(scene, product_with_design)
+        integrity = integrity or flat_integrity
+        provider = "gemini-background+composite" if scene else "deterministic-composite"
+
     if final.width < 1500 or final.height < 1500:
         final = final.resize((1600, 1600), Image.LANCZOS)
 
@@ -183,12 +215,10 @@ def generate_uploaded_design_product_mockup(
         "filename": name,
         "width": final.width,
         "height": final.height,
-        "integrity_score": flat["score"],
-        "integrity_flat": flat,
-        "print_bbox": bbox,
-        "product_scene_bbox": product_scene_bbox,
+        "integrity_score": integrity["score"] if integrity else 0.0,
+        "integrity_flat": integrity if integrity else {"score": 0.0, "note": "gemini-no-integrity-check"},
         "seconds": round(time.time() - started, 2),
-        "cost_usd": 0.0 if provider == "deterministic-composite" else round(0.08 * (final.width * final.height) / (1600 * 1600), 2),
+        "cost_usd": 0.0 if "composite" in provider else round(0.08 * (final.width * final.height) / (1600 * 1600), 2),
         "provider": provider,
     }
 

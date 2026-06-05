@@ -165,6 +165,91 @@ def try_generate_ai_scene(prompt: str, product_color: str) -> Optional[Image.Ima
         return None
 
 
+def try_generate_dual_input_lifestyle_mockup(
+    design_image: Union[bytes, str, Path],
+    product_image: Union[bytes, str, Path],
+    prompt: str,
+) -> Optional[Image.Image]:
+    """Generate ONE-PASS lifestyle mockup from TWO inputs: print design + product.
+
+    Sends both images to Gemini with explicit roles:
+    - Image 1 = the PRINT DESIGN (exact artwork, preserve 100%)
+    - Image 2 = the BLANK GARMENT product mockup (base product, apply design on it)
+    Gemini generates the final lifestyle mockup with design applied to product.
+
+    Falls back quietly on any error.
+    """
+    from google import genai
+    from google.genai import types
+    from config_store import load_settings
+
+    s = load_settings()
+    key = s.get("llm_api_key", "").strip()
+    if not key or "..." in key:
+        print("Gemini API key missing", flush=True)
+        return None
+
+    def _read(path_or_bytes) -> bytes:
+        if isinstance(path_or_bytes, Path):
+            return path_or_bytes.read_bytes()
+        if isinstance(path_or_bytes, str):
+            return Path(path_or_bytes).read_bytes()
+        return path_or_bytes
+
+    design_bytes = _read(design_image)
+    product_bytes = _read(product_image)
+
+    client = genai.Client(api_key=key)
+    model = (s.get("image_model") or s.get("llm_image_model") or "gemini-3.1-flash-image").strip()
+    model_ref = model if model.startswith("models/") else f"models/{model}"
+    print(f"Using Gemini dual-input mockup model: {model_ref}", flush=True)
+
+    dual_prompt = (
+        "You are a professional ecommerce mockup artist. I give you TWO images:\n\n"
+        "IMAGE 1 (first image) = the PRINT DESIGN. This is the exact artwork to be printed on the product. "
+        "You MUST preserve this design 100% — do NOT change colors, crop, distort, or rewrite any text.\n\n"
+        "IMAGE 2 (second image) = the BLANK GARMENT/BASE PRODUCT. This is the product mockup without any print applied.\n\n"
+        f"TASK: Generate a photorealistic lifestyle mockup of a model wearing/using the product from IMAGE 2, "
+        f"with the print design from IMAGE 1 applied EXACTLY onto the product's print area. The design must appear "
+        f"undistorted, full-color, and properly placed on the product.\n\n"
+        f"Scene/style: {prompt[:1000]}\n\n"
+        "CRITICAL RULES:\n"
+        "- Preserve the exact design artwork 100% — no changes to colors, text, logos, or layout.\n"
+        "- The product must match IMAGE 2 exactly (same color, model, shape).\n"
+        "- Photorealistic quality, professional lighting, suitable for Etsy/Amazon listing.\n"
+        "- No text/watermarks added by you.\n"
+        "- No real brand logos or celebrity faces (do not hallucinate people on the design).\n"
+        "- Output single image ≥1500×1500 resolution."
+    )
+
+    try:
+        resp = client.models.generate_content(
+            model=model_ref,
+            contents=[
+                types.Part.from_bytes(data=design_bytes, mime_type="image/png"),
+                types.Part.from_bytes(data=product_bytes, mime_type="image/png"),
+                types.Part.from_text(text=dual_prompt),
+            ],
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE", "TEXT"],
+                safety_settings=[
+                    types.SafetySetting(
+                        category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                        threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+                    ),
+                ],
+            ),
+        )
+        for part in resp.candidates[0].content.parts:
+            if part.inline_data and part.inline_data.mime_type and "image" in part.inline_data.mime_type:
+                img = Image.open(io.BytesIO(part.inline_data.data)).convert("RGBA")
+                print(f"Gemini dual-input mockup generated: {img.size}, model={model}", flush=True)
+                return img
+        print("Gemini dual-input response has no image data", flush=True)
+        return None
+    except Exception as e:
+        print(f"Gemini dual-input mockup error: {e}", flush=True)
+        return None
 def try_generate_lifestyle_mockup(
     product_image: Union[bytes, str, Path],
     prompt: str,
