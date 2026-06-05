@@ -428,20 +428,20 @@ async function sendMessage() {
       addToHistory(msg);
     } else if (d.type === 'product') {
       let m = d.meta || {};
-      let html = `<p style="font-weight:600;margin-bottom:10px">${escapeHtml(d.content || 'Dạ, em tìm thấy sản phẩm này.')}</p>
-        <div class="result-card">
+      let html = `<p style="font-weight:600;margin-bottom:10px">${escapeHtml(d.content || 'Dạ anh, đây là sản phẩm em tìm được.')}</p>`;
+      if (d.image) html += `<img src="${escapeHtml(d.image)}" alt="product" class="mockup-img">`;
+      html += `<div class="result-card">
           <div class="result-grid">
             <div><span>CODE</span><strong>${escapeHtml(m.code || '')}</strong></div>
             <div><span>NAME</span><strong>${escapeHtml(m.name || '')}</strong></div>
           </div>
         </div>`;
-      if (d.image) html += `<img src="${escapeHtml(d.image)}" alt="product" class="mockup-img">`;
       addMessage('bot', html);
       addToHistory(msg);
     } else if (d.type === 'error') {
       addMessage('bot', `<p>Dạ, em gặp lỗi: ${escapeHtml(d.content)}</p>`);
     } else {
-      addMessage('bot', `<p>${escapeHtml(d.content)}</p>`);
+      addMessage('bot', renderTextContent(d.content || ''));
     }
   } catch(e) {
     loadingEl.remove();
@@ -475,14 +475,44 @@ function addToHistory(msg) {
   h.appendChild(item);
 }
 
-function newChat() {
+async function newChat() {
   document.getElementById('chatInner').innerHTML = `<div class="empty-state"><div class="slogan-mark">JOURNEY<br>OF YOU</div></div>`;
   chatHistory = [];
+  currentDesign = null;
+  document.getElementById('designChip').style.display = 'none';
+  try {
+    await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: '/new', chat_id: CHAT_ID})
+    });
+  } catch(e) {}
 }
 
 function usePrompt(text) {
   document.getElementById('userInput').value = text;
   document.getElementById('userInput').focus();
+}
+
+function renderTextContent(text) {
+  // Minimal markdown support: image markdown → real <img>, bold → <strong>.
+  // Keeps all other text escaped to avoid raw HTML injection.
+  const s = String(text || '');
+  const parts = [];
+  let last = 0;
+  const re = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    if (m.index > last) parts.push(`<p>${formatInlineMarkdown(s.slice(last, m.index))}</p>`);
+    parts.push(`<img src="${escapeHtml(m[2])}" alt="${escapeHtml(m[1] || 'image')}" class="mockup-img">`);
+    last = re.lastIndex;
+  }
+  if (last < s.length) parts.push(`<p>${formatInlineMarkdown(s.slice(last))}</p>`);
+  return parts.join('');
+}
+
+function formatInlineMarkdown(s) {
+  return escapeHtml(s).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
 }
 
 function escapeHtml(s) {

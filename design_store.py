@@ -70,11 +70,24 @@ def save_design(
         normalized_name = source_name
         normalized_path = source_path
 
-    # Read dimensions + alpha
+    # Normalize artwork content for compositing (trim transparent/empty padding).
+    try:
+        from design_normalizer import normalize_design_file
+        clean_meta = normalize_design_file(normalized_path)
+        normalized_path = Path(clean_meta["normalized_path"])
+    except Exception:
+        clean_meta = {}
+
+    # Read dimensions + alpha + validation warnings
     from PIL import Image
     img = Image.open(normalized_path)
     width, height = img.size
     has_alpha = img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info)
+    try:
+        from image_preprocess import validate_design_file
+        validation = validate_design_file(normalized_path)
+    except Exception:
+        validation = {"warnings": []}
 
     metadata = {
         "design_id": design_id,
@@ -86,6 +99,9 @@ def save_design(
         "width": width,
         "height": height,
         "has_alpha": has_alpha,
+        "removed_background": bool(clean_meta.get("removed_background")),
+        "bg_color": clean_meta.get("bg_color"),
+        "validation_warnings": validation.get("warnings", []),
         "created_at": int(Path(source_path).stat().st_mtime),
         "file_size": len(file_bytes),
     }

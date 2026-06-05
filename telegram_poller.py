@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
@@ -144,7 +145,19 @@ async def process_message(token: str, chat_id: int, text: str, msg: dict = None)
         else:
             send_text(token, chat_id, caption + "\nImage file missing.")
     else:
-        send_text(token, chat_id, result.get("content", "No response"))
+        content = result.get("content", "No response")
+        image_matches = re.findall(r"!\[([^\]]*)\]\((https?://[^\s)]+)\)", content or "")
+        text_clean = re.sub(r"!\[[^\]]*\]\(https?://[^\s)]+\)", "", content or "").strip()
+        if text_clean:
+            send_text(token, chat_id, text_clean)
+        if image_matches:
+            for alt, url in image_matches[:10]:
+                try:
+                    send_photo_url(token, chat_id, url, alt[:200] if alt else "Order")
+                except Exception as e:
+                    send_text(token, chat_id, f"Không gửi được ảnh: {url}\n{e}")
+        if not text_clean and not image_matches:
+            send_text(token, chat_id, content)
 
 
 def main():

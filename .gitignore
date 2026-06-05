@@ -16,3 +16,9 @@ uploads/
 
 # local archives
 *.zip
+memory/state/
+memory/burger_memory.sqlite3
+memory/session_*.json
+memory/user_profiles.json
+memory/session_webfix.json
+.hermes/

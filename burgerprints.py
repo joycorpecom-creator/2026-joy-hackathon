@@ -131,7 +131,14 @@ class BurgerPrintsClient:
         return self._request("GET", "/product", params=params)
 
     def product(self, product_id_or_short_code: str) -> Dict[str, Any]:
-        return self._request("GET", f"/product/{product_id_or_short_code}")
+        code = (product_id_or_short_code or "").strip()
+        if not code:
+            raise RuntimeError("Missing BurgerPrints catalog short_code")
+        if code.isdigit():
+            raise RuntimeError(f"'{code}' is a product model fragment, not a BP catalog short_code. Search catalog first.")
+        if re.search(r"^A\d{4,}-", code, re.I):
+            raise RuntimeError(f"'{code}' looks like a seller dashboard product id, not a BP catalog short_code.")
+        return self._request("GET", f"/product/{code}")
 
     def out_of_stock(self) -> Dict[str, Any]:
         return self._request("GET", "/product/outofstock")
@@ -186,8 +193,8 @@ class BurgerPrintsClient:
         m = re.search(r"(?:order\s*)?(DEMO[-_]?\d+|BP[-_]?\d+|ORD[-_]?\d+|A\d{4,}-[A-Z]{2}-\d+)", text, re.I)
         if m:
             return m.group(1)
-        m = re.search(r"(?:order\s*)?([A-Za-z0-9][A-Za-z0-9_-]{5,})", text, re.I)
-        return m.group(1) if m else "DEMO-1001"
+        # No loose fallback. Product names/codes like Gildan 5000 must not become orders.
+        return ""
 
     def _demo_order(self, order_id: str) -> Dict[str, Any]:
         return {

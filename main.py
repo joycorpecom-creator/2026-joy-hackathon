@@ -143,6 +143,29 @@ async def get_output(filename: str):
     return JSONResponse({"error": "Not found"}, status_code=404)
 
 
+# ── LIVE LOGS ──
+
+LOG_PATH = Path(os.getenv("AGENT_LOG_PATH", "/tmp/joy_dnse_main.log"))
+
+@app.get("/api/logs/agent")
+async def api_agent_logs(lines: int = 400):
+    try:
+        if not LOG_PATH.exists():
+            return JSONResponse({"ok": False, "path": str(LOG_PATH), "content": "log file not found"})
+        data = LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()
+        return JSONResponse({"ok": True, "path": str(LOG_PATH), "content": "\n".join(data[-max(1, min(lines, 2000)):])})
+    except Exception as e:
+        return JSONResponse({"ok": False, "path": str(LOG_PATH), "content": str(e)})
+
+@app.get("/logs/agent", response_class=HTMLResponse)
+async def agent_logs_page():
+    return HTMLResponse("""
+<!doctype html><html><head><meta charset='utf-8'><title>Agent Live Logs</title>
+<style>body{margin:0;background:#0b1020;color:#d6e2ff;font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}header{position:sticky;top:0;background:#111936;border-bottom:1px solid #26345f;padding:10px 14px;color:#fff}pre{white-space:pre-wrap;word-break:break-word;padding:14px;margin:0}</style></head>
+<body><header>Agent live logs — auto refresh 2s — /tmp/joy_dnse_main.log</header><pre id='log'>loading...</pre>
+<script>async function load(){try{let r=await fetch('/api/logs/agent?lines=700',{cache:'no-store'});let d=await r.json();log.textContent=d.content||'';scrollTo(0,document.body.scrollHeight)}catch(e){log.textContent=e.message}}load();setInterval(load,2000)</script></body></html>
+""")
+
 # ── SERVE HTML DASHBOARD ──
 
 @app.get("/", response_class=HTMLResponse)
@@ -316,7 +339,29 @@ async def telegram_webhook(req: Request):
         else:
             rq.post(f"{api}/sendMessage", json={"chat_id": chat_id, "text": f"Image not found", "parse_mode": "Markdown"}, timeout=15)
     else:
-        rq.post(f"{api}/sendMessage", json={"chat_id": chat_id, "text": result.get("content", "No content"), "parse_mode": "Markdown"}, timeout=15)
+        content = result.get("content", "No content")
+        # If agent returned markdown images (order list), send them as real Telegram photos.
+        image_matches = re.findall(r"!\[([^\]]*)\]\((https?://[^\s)]+)\)", content or "")
+        text_without_images = re.sub(r"!\[[^\]]*\]\(https?://[^\s)]+\)", "", content or "").strip()
+        if text_without_images:
+            rq.post(f"{api}/sendMessage", json={"chat_id": chat_id, "text": text_without_images, "parse_mode": "Markdown"}, timeout=15)
+        if image_matches:
+            for alt, img in image_matches[:10]:
+                try:
+                    img_r = rq.get(img, timeout=25)
+                    img_r.raise_for_status()
+                    ext = img.split("?", 1)[0].rsplit(".", 1)[-1] if "." in img.split("?", 1)[0] else "jpg"
+                    fname = f"/tmp/tg_order_{chat_id}_{int(time.time()*1000)}.{ext}"
+                    with open(fname, "wb") as f:
+                        f.write(img_r.content)
+                    with open(fname, "rb") as f:
+                        rq.post(f"{api}/sendPhoto", data={"chat_id": chat_id, "caption": alt[:200] if alt else "Order image"}, files={"photo": f}, timeout=30)
+                    try: os.remove(fname)
+                    except: pass
+                except Exception as e:
+                    rq.post(f"{api}/sendMessage", json={"chat_id": chat_id, "text": f"Không gửi được ảnh {alt}: {img}\n{e}"}, timeout=15)
+        if not text_without_images and not image_matches:
+            rq.post(f"{api}/sendMessage", json={"chat_id": chat_id, "text": content, "parse_mode": "Markdown"}, timeout=15)
 
     return {"ok": True}
 

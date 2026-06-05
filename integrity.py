@@ -7,7 +7,14 @@ from typing import Dict, Tuple
 from PIL import Image
 
 
+def _content_crop(img: Image.Image) -> Image.Image:
+    rgba = img.convert("RGBA")
+    bbox = rgba.getchannel("A").getbbox()
+    return rgba.crop(bbox) if bbox else rgba
+
+
 def _rgb(img: Image.Image) -> Image.Image:
+    img = _content_crop(img)
     if img.mode == "RGBA":
         bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
         bg.alpha_composite(img)
@@ -20,12 +27,12 @@ def _ssim(a: Image.Image, b: Image.Image) -> float:
     try:
         from skimage.metrics import structural_similarity
         aa = np.asarray(_rgb(a))
-        bb = np.asarray(_rgb(b).resize(a.size))
+        bb = np.asarray(_rgb(b).resize(aa.shape[1::-1]))
         return float(structural_similarity(aa, bb, channel_axis=2, data_range=255))
     except Exception:
         # Lightweight fallback: normalized inverse MSE.
         aa = np.asarray(_rgb(a)).astype("float32")
-        bb = np.asarray(_rgb(b).resize(a.size)).astype("float32")
+        bb = np.asarray(_rgb(b).resize(aa.shape[1::-1])).astype("float32")
         mse = ((aa - bb) ** 2).mean()
         return max(0.0, 1.0 - mse / (255.0 ** 2))
 

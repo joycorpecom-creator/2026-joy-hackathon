@@ -1,0 +1,44 @@
+{
+  "agent_manifest": "joyagent.md",
+  "read_order": [
+    "joyagent.md",
+    "HERMES_PROJECT_INDEX.md",
+    "PROJECT_SPEC_BURGERMOCKUP.md",
+    "docs/BURGERPRINTS_API_FLOW.md",
+    "docs/context/routing-map.md",
+    "docs/context/mockup-pipeline-contract.md",
+    "docs/context/memory-contract.md",
+    "skills/burgermockup-agent-routing/SKILL.md",
+    "skills/burgermockup-design-integrity/SKILL.md",
+    "skills/burgermockup-bp-api/SKILL.md",
+    "skills/burgermockup-memory/SKILL.md",
+    "skills/burgermockup-demo-ops/SKILL.md"
+  ],
+  "required_context_before_work": [
+    "Read joyagent.md first",
+    "For routing/tool-choice bugs, read skills/burgermockup-agent-routing/SKILL.md",
+    "For design quality/color/background/SSIM bugs, read skills/burgermockup-design-integrity/SKILL.md",
+    "For BurgerPrints API/product/order confusion, read skills/burgermockup-bp-api/SKILL.md",
+    "For memory/personalization/recall, read skills/burgermockup-memory/SKILL.md",
+    "For judge setup/packaging/demo, read skills/burgermockup-demo-ops/SKILL.md"
+  ],
+  "core_files": {
+    "web_api": "main.py",
+    "agent_loop": "agent.py",
+    "memory": "burger_memory.py",
+    "mockup_engine": "mockup_engine.py",
+    "design_normalizer": "design_normalizer.py",
+    "design_compositor": "design_compositor.py",
+    "integrity": "integrity.py",
+    "bp_api": "burgerprints.py",
+    "ui": "static/index.html"
+  },
+  "rules": {
+    "current_request_overrides_memory": true,
+    "preserve_design_pixels": true,
+    "output_min_size": "1500x1500",
+    "judge_setup_max_minutes": 15,
+    "no_real_brand_logos": true,
+    "no_celebrity_faces": true
+  }
+}

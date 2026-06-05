@@ -25,21 +25,31 @@ def has_useful_alpha(img: Image.Image, min_transparent_ratio: float = 0.05) -> b
 def validate_design_file(path: str | Path) -> Dict[str, object]:
     """Non-blocking design diagnostics.
 
-    Telegram photo uploads become JPG and lose transparency, so this function
-    returns warnings instead of rejecting. Agent can surface these warnings.
+    Separates "image supports alpha" (mode-based) from "has useful transparent area"
+    (ratio-based). Crop-sát transparent PNGs that fill the full canvas still count
+    as capable of alpha — only pure JPG/RGB files get the no_alpha warning.
+
+    The possible_product_mockup heuristic only fires for actual JPEG uploads.
+    PNG/SVG uploads are never miscategorised as mockup photos.
     """
     img = Image.open(path)
     w, h = img.size
-    alpha = has_useful_alpha(img)
+    # Mode-based: does the image even HAVE an alpha channel?
+    mode_has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
+    # Ratio-based: is at least 5% of pixels semi-transparent?
+    useful_alpha = has_useful_alpha(img)
     warnings = []
-    if not alpha:
+
+    # Only warn about missing alpha when the file format literally cannot hold it.
+    # RGBA PNGs with art filling the canvas (common for POD) are not "no-alpha".
+    if not mode_has_alpha and not useful_alpha:
         warnings.append("no_alpha: PNG/document upload recommended for exact print isolation")
     if w < 800 or h < 800:
         warnings.append("low_resolution: upload ≥1500px design for best listing output")
-    # Product-render heuristic: portrait JPG with no alpha often is a mockup/photo, not flat artwork.
-    if not alpha and img.format in ("JPEG", "JPG") and 0.65 <= (w / max(h, 1)) <= 1.05:
+    # Product-render heuristic: JPEG only — never fire for PNG/SVG.
+    if img.format in ("JPEG", "JPG") and not useful_alpha and 0.65 <= (w / max(h, 1)) <= 1.05:
         warnings.append("possible_product_mockup: image looks like a product/photo render, not a flat print file")
-    return {"width": w, "height": h, "has_alpha": alpha, "warnings": warnings}
+    return {"width": w, "height": h, "has_alpha": useful_alpha, "mode_has_alpha": mode_has_alpha, "warnings": warnings}
 
 
 def remove_product_background(img: Image.Image) -> Image.Image:
