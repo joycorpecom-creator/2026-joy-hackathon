@@ -1,0 +1,17 @@
+# secrets / local runtime
+.env
+settings.json
+*.log
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# generated media
+outputs/
+assets/
+
+# local archives
+*.zip
