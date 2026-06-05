@@ -27,6 +27,12 @@ def composite_design_on_product(product_image: Image.Image, design_path: str | P
     product = product_image.convert("RGBA")
     x, y, w, h = int(print_bbox["x"]), int(print_bbox["y"]), int(print_bbox["w"]), int(print_bbox["h"])
     placed = normalize_design_layer(design_path, (w, h))
+    # Slight fabric highlight to reduce pasted look while keeping artwork mostly intact.
+    try:
+        from image_preprocess import add_subtle_fabric_shading
+        placed_visual = add_subtle_fabric_shading(placed, strength=10)
+    except Exception:
+        placed_visual = placed
 
     # Subtle shadow from alpha; design pixels remain untouched.
     shadow = Image.new("RGBA", product.size, (0, 0, 0, 0))
@@ -36,7 +42,7 @@ def composite_design_on_product(product_image: Image.Image, design_path: str | P
 
     out = product.copy()
     out.alpha_composite(shadow)
-    out.alpha_composite(placed, (x, y))
+    out.alpha_composite(placed_visual, (x, y))
 
     # Very light fabric highlight over whole print area (low alpha).
     highlight = Image.new("RGBA", product.size, (255, 255, 255, 0))
@@ -52,12 +58,13 @@ def composite_product_into_scene(scene: Image.Image, product: Image.Image, scale
 
     Removes product background automatically before compositing.
     """
-    from image_preprocess import remove_product_background, trim_transparent
+    from image_preprocess import remove_product_background, trim_transparent, match_product_lighting, make_contact_shadow
 
     scene = scene.convert("RGBA")
     product = product.convert("RGBA")
     # Remove BP product background to avoid rectangular cutout artifacts.
     product = trim_transparent(remove_product_background(product), padding=18)
+    product = match_product_lighting(product, scene)
     product = Image.alpha_composite(Image.new("RGBA", product.size, (255, 255, 255, 0)), product)
     max_w = int(scene.width * scale)
     max_h = int(scene.height * 0.76)
@@ -68,9 +75,7 @@ def composite_product_into_scene(scene: Image.Image, product: Image.Image, scale
     y = max(20, min(y, scene.height - product.height - 20))
 
     alpha = product.split()[-1]
-    shadow = Image.new("RGBA", scene.size, (0, 0, 0, 0))
-    shadow.paste(alpha.filter(ImageFilter.GaussianBlur(22)), (x + 26, y + 34))
-    shadow = ImageEnhance.Brightness(shadow).enhance(0.32)
+    shadow = make_contact_shadow(alpha, scene.size, (x, y))
 
     out = scene.copy()
     out.alpha_composite(shadow)

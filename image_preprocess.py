@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Tuple
 
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageStat
 
 
 def has_useful_alpha(img: Image.Image, min_transparent_ratio: float = 0.05) -> bool:
@@ -98,3 +98,64 @@ def trim_transparent(img: Image.Image, padding: int = 12) -> Image.Image:
     x2 = min(rgba.width, x2 + padding)
     y2 = min(rgba.height, y2 + padding)
     return rgba.crop((x1, y1, x2, y2))
+
+
+def match_product_lighting(product: Image.Image, scene: Image.Image) -> Image.Image:
+    """Gently match product brightness/contrast to scene.
+
+    Keeps color shifts small to protect product/design fidelity.
+    """
+    prod = product.convert("RGBA")
+    alpha = prod.split()[-1]
+    if not alpha.getbbox():
+        return prod
+    scene_rgb = scene.convert("RGB")
+    prod_rgb = Image.new("RGB", prod.size, (255, 255, 255))
+    prod_rgb.paste(prod.convert("RGB"), mask=alpha)
+
+    scene_mean = sum(ImageStat.Stat(scene_rgb).mean) / 3.0
+    prod_mean = sum(ImageStat.Stat(prod_rgb, alpha).mean[:3]) / 3.0 if alpha else scene_mean
+    if prod_mean <= 1:
+        return prod
+    factor = max(0.82, min(1.18, scene_mean / prod_mean))
+    prod_rgb = ImageEnhance.Brightness(prod_rgb).enhance(factor)
+
+    # Slightly soften overly flat catalog product for photo scene.
+    contrast = 0.96 if scene_mean < 120 else 1.04
+    prod_rgb = ImageEnhance.Contrast(prod_rgb).enhance(contrast)
+    out = prod_rgb.convert("RGBA")
+    out.putalpha(alpha)
+    return out
+
+
+def make_contact_shadow(alpha: Image.Image, size: Tuple[int, int], offset: Tuple[int, int]) -> Image.Image:
+    """Create layered shadow: soft global + stronger contact under product."""
+    shadow = Image.new("RGBA", size, (0, 0, 0, 0))
+    sx, sy = offset
+    soft = alpha.filter(ImageFilter.GaussianBlur(26))
+    contact = alpha.filter(ImageFilter.GaussianBlur(9))
+    shadow.paste(soft, (sx + 30, sy + 38))
+    shadow = ImageEnhance.Brightness(shadow).enhance(0.24)
+    contact_layer = Image.new("RGBA", size, (0, 0, 0, 0))
+    contact_layer.paste(contact, (sx + 10, sy + 18))
+    contact_layer = ImageEnhance.Brightness(contact_layer).enhance(0.16)
+    return Image.alpha_composite(shadow, contact_layer)
+
+
+def add_subtle_fabric_shading(layer: Image.Image, strength: int = 14) -> Image.Image:
+    """Add very light center highlight/edge shade over placed print layer.
+
+    Designed to look less pasted while preserving most design pixels.
+    """
+    rgba = layer.convert("RGBA")
+    w, h = rgba.size
+    shade = Image.new("RGBA", (w, h), (255, 255, 255, 0))
+    px = shade.load()
+    for y in range(h):
+        for x in range(w):
+            nx = abs((x / max(w - 1, 1)) - 0.5) * 2
+            ny = abs((y / max(h - 1, 1)) - 0.5) * 2
+            v = int(strength * (1 - min(1, (nx * 0.7 + ny * 0.3))))
+            if v > 0:
+                px[x, y] = (255, 255, 255, v)
+    return Image.alpha_composite(rgba, shade)
