@@ -103,8 +103,9 @@ def get_current_design(chat_id: str) -> Optional[dict]:
     if not chat_dir.exists():
         return None
 
-    # Find latest metadata file
-    meta_files = sorted(chat_dir.glob("*_meta.json"), reverse=True)
+    # Find latest metadata file by modification time, not filename.
+    # Hash filenames are not chronological; lexicographic sort can pick an older design.
+    meta_files = sorted(chat_dir.glob("*_meta.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     for mf in meta_files:
         try:
             return json.loads(mf.read_text())
