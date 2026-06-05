@@ -91,14 +91,26 @@ async def process_message(token: str, chat_id: int, text: str, msg: dict = None)
             f"Time: {meta.get('time','?')} | Cost: {meta.get('cost','?')}"
             f"{warn_text}"
         )
-        img_path = result.get("image", "")
-        abs_path = str((ROOT / "outputs" / os.path.basename(img_path)).resolve())
-        log.info("mockup image path=%s exists=%s", abs_path, os.path.exists(abs_path))
-        if os.path.exists(abs_path):
-            log.info("sending mockup photo to chat_id=%s", chat_id)
-            send_photo(token, chat_id, abs_path, caption)
+        images = result.get("images") or []
+        if images:
+            send_text(token, chat_id, result.get("content", caption))
+            for idx, im in enumerate(images[:10], start=1):
+                img_path = im.get("url", "")
+                abs_path = str((ROOT / "outputs" / os.path.basename(img_path)).resolve())
+                cap = f"{idx}. {im.get('scene','Mockup')}"
+                if os.path.exists(abs_path):
+                    send_photo(token, chat_id, abs_path, cap)
+                else:
+                    send_text(token, chat_id, cap + "\nImage file missing.")
         else:
-            send_text(token, chat_id, caption + "\nImage file missing.")
+            img_path = result.get("image", "")
+            abs_path = str((ROOT / "outputs" / os.path.basename(img_path)).resolve())
+            log.info("mockup image path=%s exists=%s", abs_path, os.path.exists(abs_path))
+            if os.path.exists(abs_path):
+                log.info("sending mockup photo to chat_id=%s", chat_id)
+                send_photo(token, chat_id, abs_path, caption)
+            else:
+                send_text(token, chat_id, caption + "\nImage file missing.")
     else:
         content = result.get("content", "No response")
         image_matches = re.findall(r"!\[([^\]]*)\]\((https?://[^\s)]+)\)", content or "")

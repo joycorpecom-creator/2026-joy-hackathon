@@ -102,7 +102,7 @@ TOOL_DECLARATIONS = types.Tool(
                 "type": "object",
                 "properties": {
                     "order_id": {"type": "string", "description": "Mã đơn hàng, VD DEMO-1001 hoặc BP-xxx"},
-                    "scene": {"type": "string", "description": "Mô tả scene: cafe, streetwear, outdoor... Có thể tiếng Việt hoặc Anh."},
+                    "scene": {"type": "string", "description": "Mô tả scene: cafe, streetwear, outdoor... Có thể tiếng Việt hoặc Anh. Có thể dùng dấu phẩy cho nhiều scene."},
                 },
                 "required": ["order_id", "scene"],
             },
@@ -114,9 +114,21 @@ TOOL_DECLARATIONS = types.Tool(
                 "type": "object",
                 "properties": {
                     "short_code": {"type": "string", "description": "Mã sản phẩm BP, có được từ bp_get_product hoặc bp_search_products"},
-                    "scene": {"type": "string", "description": "Mô tả scene: cafe, streetwear, outdoor..."},
+                    "scene": {"type": "string", "description": "Mô tả scene: cafe, streetwear, outdoor... Có thể dùng dấu phẩy cho nhiều scene: 'cafe, outdoor, studio'."},
                 },
                 "required": ["short_code", "scene"],
+            },
+        ),
+        # ── Refine / Reuse ──
+        types.FunctionDeclaration(
+            name="refine_mockup",
+            description="Điều chỉnh/thay đổi mockup đã tạo trước đó mà KHÔNG cần nhắc lại order_id. Dùng khi user nói 'thay đổi người mẫu ốm hơn', 'đổi scene cafe', 'thêm background biển'. Agent tự động lấy order_id từ session_state.current_order_id.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "new_scene": {"type": "string", "description": "Mô tả scene mới hoặc điều chỉnh cần thay đổi"},
+                },
+                "required": ["new_scene"],
             },
         ),
         # ── Memory ──
@@ -159,6 +171,7 @@ PHÂN BIỆT 3 NHÓM Ý ĐỊNH BẮT BUỘC:
    - Đây là sản phẩm phôi/catalog của BP, chưa phải thiết kế final của seller.
    - Hành động: gọi bp_search_products nếu user đưa tên; gọi bp_get_product nếu user đưa short_code rõ.
    - KHÔNG tạo mockup nếu user không có từ khóa tạo ảnh/mockup/lifestyle/scene/phong cách.
+   - Nếu user yêu cầu NHIỀU ảnh / nhiều phong cách cùng lúc (VD "5 phong cách", "tạo 3 ảnh"), dùng dấu phẩy trong scene: "cafe, streetwear, outdoor, studio, flat-lay".
 
 2) TẠO MOCKUP TỪ SẢN PHẨM PHÔI BP CATALOG
    - Ví dụ: "tạo hình ảnh mockup sản phẩm XXX với phong cách A,B,C".
@@ -179,6 +192,12 @@ LUẬT ROUTING:
 - Nếu chỉ có product name/code + intent xem/lấy → product info branch.
 - Nếu thiếu scene khi tạo mockup → hỏi lại scene/phong cách 1 câu, không tự bịa.
 - Khi user hỏi danh sách/toàn bộ order_id/đơn hàng gần đây: gọi bp_list_orders. Câu trả lời phải kèm ảnh nếu tool trả mockup_url hoặc design_url. Dùng markdown image `![order](url)` để web render ảnh.
+
+4) REFINE / ĐIỀU CHỈNH MOCKUP CŨ
+   - Ví dụ: "thay đổi người mẫu ốm hơn", "đổi scene cafe", "tạo lại với background biển".
+   - User KHÔNG nhắc lại order_id, chỉ muốn thay đổi mockup vừa tạo.
+   - Hành động: refine_mockup(new_scene="mô tả thay đổi"). Agent tự lấy current_order_id từ memory.
+   - KHÔNG hỏi lại order_id khi user refine.
 
 CHAT STYLE:
 - LUÔN xưng hô "Dạ" mở đầu mỗi câu trả lời, gọi user là "anh".
@@ -257,6 +276,72 @@ class BurgerMockupAgent:
         return hist
 
     # ── Tool execution ──────────────────────────────────────────────────
+
+
+    def _split_scenes(self, scene: str) -> List[str]:
+        """Split comma/newline separated scene request into a capped batch."""
+        import re
+        raw = str(scene or "").strip()
+        if not raw:
+            return []
+        parts = [x.strip(" -•\t") for x in re.split(r"[,;\n]+", raw) if x.strip()]
+        return parts[:8] or [raw]
+
+    def _create_order_mockup_once(self, oid: str, scene: str) -> Dict[str, Any]:
+        """Generate one order-based mockup + upload/sync."""
+        t0 = time.time()
+        asset = self.bp.extract_first_asset(oid)
+        result = generate_mockup(asset, scene)
+        elapsed = round(time.time() - t0, 2)
+
+        from imgbb_uploader import upload_image
+        from sync_webhook import build_mockup_payload, post_mockup_created
+        local_path = result.get("path", "")
+        imgbb_result = upload_image(local_path) if local_path else {"ok": False, "error": "missing local path"}
+        public_img_url = imgbb_result.get("url") or imgbb_result.get("display_url") or ""
+        sync_payload = build_mockup_payload(
+            result=result, product_id=asset.product_id or oid, product_name=asset.product_name,
+            color=asset.color_name, scene=scene, raw_user_input=scene,
+            public_base_url=self.settings.get("public_base_url", ""),
+        )
+        if public_img_url:
+            sync_payload["assets"]["image_url"] = public_img_url
+            sync_payload["assets"]["imgbb_url"] = public_img_url
+            sync_payload["assets"]["imgbb_delete_url"] = imgbb_result.get("delete_url", "")
+        try:
+            from lark_media_sync import _load_config, _get_tenant_token, _upload_to_base_media
+            lcfg = _load_config()
+            ltoken = _get_tenant_token(lcfg["app_id"], lcfg["app_secret"], lcfg["lark_base_url"])
+            media = _upload_to_base_media(local_path, lcfg["base_token"], ltoken, lcfg["lark_base_url"], result.get("filename") or Path(local_path).name)
+            if media.get("file_token"):
+                sync_payload["assets"]["lark_file_token"] = media["file_token"]
+        except Exception as e:
+            sync_payload["assets"]["lark_media_error"] = str(e)
+        sync_result = post_mockup_created(sync_payload, self.settings)
+        sync_info = {
+            "sync_status": sync_result.get("status", "skipped"),
+            "sync_record_id": sync_result.get("record_id", ""),
+            "sync_image_url": public_img_url,
+        }
+        if imgbb_result.get("error"):
+            sync_info["imgbb_error"] = str(imgbb_result["error"])
+        if sync_result.get("error"):
+            sync_info["sync_error"] = str(sync_result["error"])
+
+        return {
+            "order_id": oid,
+            "mockup_url": f"/outputs/{result['path'].split('/')[-1]}",
+            "provider": result["provider"],
+            "size": f"{result['width']}×{result['height']}",
+            "integrity": result["integrity_score"],
+            "time": f"{elapsed}s",
+            "cost": f"${result['cost_usd']}",
+            "product": asset.product_name,
+            "color": asset.color_name,
+            "scene": scene,
+            "source_asset": result.get("source_asset", "?"),
+            **sync_info,
+        }
 
     def _execute_tool(self, name: str, args: Dict[str, Any]) -> Any:
         """Execute a tool and return the result as a JSON-serializable dict."""
@@ -407,61 +492,32 @@ class BurgerMockupAgent:
             if name == "create_mockup_from_order":
                 oid = args.get("order_id", "")
                 scene = args.get("scene", "")
-                t0 = time.time()
-                asset = self.bp.extract_first_asset(oid)
-                result = generate_mockup(asset, scene)
-                elapsed = round(time.time() - t0, 2)
-                # ── imgbb → n8n sync (same as product branch) ──
-                from imgbb_uploader import upload_image
-                from sync_webhook import build_mockup_payload, post_mockup_created
-                local_path = result.get("path", "")
-                imgbb_result = upload_image(local_path) if local_path else {"ok": False, "error": "missing local path"}
-                public_img_url = imgbb_result.get("url") or imgbb_result.get("display_url") or ""
-                sync_payload = build_mockup_payload(
-                    result=result,
-                    product_id=asset.product_id or oid,
-                    product_name=asset.product_name,
-                    color=asset.color_name,
-                    scene=scene,
-                    raw_user_input=scene,
-                    public_base_url=self.settings.get("public_base_url", ""),
-                )
-                if public_img_url:
-                    sync_payload["assets"]["image_url"] = public_img_url
-                    sync_payload["assets"]["imgbb_url"] = public_img_url
-                    sync_payload["assets"]["imgbb_delete_url"] = imgbb_result.get("delete_url", "")
-                try:
-                    from lark_media_sync import _load_config, _get_tenant_token, _upload_to_base_media
-                    lcfg = _load_config()
-                    ltoken = _get_tenant_token(lcfg["app_id"], lcfg["app_secret"], lcfg["lark_base_url"])
-                    media = _upload_to_base_media(local_path, lcfg["base_token"], ltoken, lcfg["lark_base_url"], result.get("filename") or Path(local_path).name)
-                    if media.get("file_token"):
-                        sync_payload["assets"]["lark_file_token"] = media["file_token"]
-                except Exception as e:
-                    sync_payload["assets"]["lark_media_error"] = str(e)
-                sync_result = post_mockup_created(sync_payload, self.settings)
-                sync_info = {
-                    "sync_status": sync_result.get("status", "skipped"),
-                    "sync_record_id": sync_result.get("record_id", ""),
-                    "sync_image_url": public_img_url,
-                }
-                if imgbb_result.get("error"):
-                    sync_info["imgbb_error"] = str(imgbb_result["error"])
-                if sync_result.get("error"):
-                    sync_info["sync_error"] = str(sync_result["error"])
-
+                scenes = self._split_scenes(scene)
+                results = []
+                for scn in scenes:
+                    one = self._create_order_mockup_once(oid, scn)
+                    results.append(one)
+                if len(results) == 1:
+                    return results[0]
                 return {
-                    "mockup_url": f"/outputs/{result['path'].split('/')[-1]}",
-                    "provider": result["provider"],
-                    "size": f"{result['width']}×{result['height']}",
-                    "integrity": result["integrity_score"],
-                    "time": f"{elapsed}s",
-                    "cost": f"${result['cost_usd']}",
-                    "product": asset.product_name,
-                    "color": asset.color_name,
-                    "source_asset": result.get("source_asset", "?"),
-                    **sync_info,
+                    "type": "mockup_batch",
+                    "order_id": oid,
+                    "count": len(results),
+                    "mockups": results,
+                    "product": results[0].get("product", "") if results else "",
+                    "color": results[0].get("color", "") if results else "",
                 }
+
+            if name == "refine_mockup":
+                import burger_memory as mem
+                state = mem.get_state(self._current_chat_id)
+                oid = state.get("current_order_id")
+                if not oid:
+                    return {"error": "Chưa có order_id trong memory. Anh gửi lại order_id giúp em."}
+                prev_scene = state.get("current_scene") or ""
+                new_scene = str(args.get("new_scene", "")).strip()
+                scene = f"Refine previous mockup. Previous scene: {prev_scene}. Change request: {new_scene}" if prev_scene else new_scene
+                return self._create_order_mockup_once(oid, scene)
 
             if name == "create_mockup_from_product":
                 sc = args.get("short_code", "")
@@ -720,68 +776,104 @@ class BurgerMockupAgent:
 
             turn_history.append(types.Content(role="user", parts=tool_responses))
 
-            # Check if the last tool call was a mockup — if so, return it directly
+            # ── Accumulate mockup results (multiple rounds possible) ──
             last_fc, result = executed_results[-1]
-            if last_fc.name in ("create_mockup_from_order", "create_mockup_from_product"):
+            if last_fc.name in ("create_mockup_from_order", "create_mockup_from_product", "refine_mockup"):
                 if result.get("error"):
                     final_text = f"Dạ, có lỗi khi tạo mockup: {result['error']}"
                     history.append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
                     history.append(types.Content(role="model", parts=[types.Part.from_text(text=final_text)]))
                     self._save_session(chat_id)
                     return {"type": "text", "content": final_text}
-                print(">>> MOCKUP TOOL DETECTED, returning result", flush=True)
-                mockup_url = result.get("mockup_url", "")
-                provider = result.get("provider", "unknown")
-                integrity = result.get("integrity", 0)
-                size_val = result.get("size", "?")
-                elapsed = result.get("time", "?")
-                cost = result.get("cost", "$0")
-                product = result.get("product", "")
-                color = result.get("color", "")
-                # scene from the tool args
-                scene = dict(last_fc.args).get("scene", "")
 
-                # Deterministic final reply: natural chat format with full details.
-                size_val_clean = size_val.replace("×", "x") if size_val else "?"
-                final_parts = [f"Dạ anh, đây là mockup cho {product} ({color}), em đã tạo xong rồi."]
-                if scene:
-                    final_parts.append(f"• Scene: {scene}")
-                final_parts.append(f"• Kích thước: {size_val_clean}")
-                final_parts.append(f"• Thời gian: {elapsed}")
-                final_parts.append(f"• Chi phí: {cost}")
-                final_parts.append(f"• Provider: {provider}")
-                sync_status = result.get("sync_status", "disabled")
-                sync_emoji = "✓" if sync_status == "sent" else "✗" if sync_status.startswith("fail") else "○"
-                final_parts.append(f"• Sync: {sync_emoji} {sync_status}")
-                final_text = "\n".join(final_parts)
+                # Single or batch?
+                batch = result.get("type") == "mockup_batch"
+                mockups = result.get("mockups", [result]) if batch else [result]
 
-                # Save session
+                # Record each mockup in memory
+                try:
+                    import burger_memory as mem
+                    for m in mockups:
+                        scn = m.get("scene", "")
+                        mem.record_mockup(str(chat_id), m, scene=scn)
+                except Exception:
+                    pass
+
+                if len(mockups) == 1:
+                    m = mockups[0]
+                    mockup_url = m.get("mockup_url", "")
+                    provider = m.get("provider", "unknown")
+                    size_val = m.get("size", "?")
+                    elapsed = m.get("time", "?")
+                    cost = m.get("cost", "$0")
+                    product = m.get("product", "")
+                    color = m.get("color", "")
+                    scene = m.get("scene", "")
+                    size_val_clean = size_val.replace("×", "x") if size_val else "?"
+                    final_parts = [f"Dạ anh, đây là mockup cho {product} ({color}), em đã tạo xong rồi."]
+                    if scene:
+                        final_parts.append(f"• Scene: {scene}")
+                    final_parts.append(f"• Kích thước: {size_val_clean}")
+                    final_parts.append(f"• Thời gian: {elapsed}")
+                    final_parts.append(f"• Chi phí: {cost}")
+                    final_parts.append(f"• Provider: {provider}")
+                    sync_status = m.get("sync_status", "disabled")
+                    sync_emoji = "✓" if sync_status == "sent" else "✗" if sync_status.startswith("fail") else "○"
+                    final_parts.append(f"• Sync: {sync_emoji} {sync_status}")
+                    final_text = "\n".join(final_parts)
+
+                    history.append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
+                    history.append(types.Content(role="model", parts=[types.Part.from_text(text=final_text)]))
+                    self._save_session(chat_id)
+                    try:
+                        import burger_memory as mem
+                        mem.record_turn(str(chat_id), message, final_text)
+                    except Exception:
+                        pass
+
+                    return {
+                        "type": "mockup",
+                        "content": final_text,
+                        "image": mockup_url,
+                        "meta": {
+                            "provider": provider, "integrity": m.get("integrity", 0),
+                            "size": size_val, "time": elapsed, "cost": cost,
+                            "product": product, "color": color,
+                            "warnings": m.get("warnings", []),
+                        },
+                    }
+
+                # Multi-mockup: return batch response
+                images = [
+                    {"url": x.get("mockup_url", ""), "scene": x.get("scene", ""),
+                     "product": x.get("product", ""), "provider": x.get("provider", ""),
+                     "integrity": x.get("integrity", 0), "cost": x.get("cost", "")}
+                    for x in mockups if x.get("mockup_url")
+                ]
+                final_text = f"Dạ anh, em đã tạo {len(images)} mockup cho {result.get('product', 'order')}:"
+                for im in images:
+                    final_text += f"\n• {im['scene']}"
+                final_text += f"\n• Tổng thời gian: {sum(float(x.get('time', '0').replace('s','') or 0) for x in mockups):.1f}s"
+
                 history.append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
                 history.append(types.Content(role="model", parts=[types.Part.from_text(text=final_text)]))
                 self._save_session(chat_id)
                 try:
                     import burger_memory as mem
                     mem.record_turn(str(chat_id), message, final_text)
-                    mem.record_mockup(str(chat_id), result, scene=scene)
                 except Exception:
                     pass
 
                 return {
                     "type": "mockup",
                     "content": final_text,
-                    "image": mockup_url,
+                    "images": images,
                     "meta": {
-                        "provider": provider,
-                        "integrity": integrity,
-                        "size": size_val,
-                        "time": elapsed,
-                        "cost": cost,
-                        "product": product,
-                        "color": color,
-                        "warnings": result.get("warnings", []),
+                        "product": result.get("product", ""),
+                        "color": result.get("color", ""),
+                        "count": len(images),
                     },
                 }
-
             # Product lookup/search: return structured image payload directly.
             # Web UI can render <img>; avoids markdown image text like ![...](url).
             if last_fc.name in ("bp_get_product", "bp_search_products") and not result.get("error"):

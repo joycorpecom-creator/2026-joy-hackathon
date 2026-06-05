@@ -161,7 +161,7 @@ def build_memory_context(chat_id: str, message: str = "") -> str:
         ]))
     if state:
         lines.append("- session_state: " + _brief_json(state, [
-            "current_design_id", "current_product", "current_scene", "last_mockup_url", "last_integrity", "last_provider", "last_warnings"
+            "current_order_id", "current_design_id", "current_product", "current_scene", "last_mockup_url", "last_integrity", "last_provider", "last_warnings"
         ]))
     if recall:
         snippets = []
@@ -188,11 +188,13 @@ def record_mockup(chat_id: str, result: Dict[str, Any], scene: str = "") -> None
         "size": result.get("size"),
         "time": result.get("time"),
         "cost": result.get("cost"),
+        "order_id": result.get("order_id"),
         "design_id": result.get("design_id"),
         "warnings": result.get("warnings"),
     }
     remember_event(chat_id, "mockup_run", data)
     update_state(chat_id, {
+        "current_order_id": result.get("order_id"),
         "current_design_id": result.get("design_id"),
         "current_product": result.get("product"),
         "current_scene": scene,

@@ -390,7 +390,13 @@ async function sendMessage() {
             <div class="cost"><span>COST</span><strong>${escapeHtml(m.cost || '')}</strong></div>
           </div>
         </div>`;
-      if (d.image) html += `<img src="${d.image}" alt="mockup" class="mockup-img">`;
+      if (Array.isArray(d.images) && d.images.length) {
+        html += `<div class="result-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-top:10px">`;
+        d.images.forEach((im, idx) => {
+          html += `<div><img src="${escapeHtml(im.url || '')}" alt="mockup ${idx+1}" class="mockup-img"><strong>${escapeHtml(im.scene || ('Mockup '+(idx+1)))}</strong></div>`;
+        });
+        html += `</div>`;
+      } else if (d.image) html += `<img src="${escapeHtml(d.image)}" alt="mockup" class="mockup-img">`;
       addMessage('bot', html);
       addToHistory(msg);
     } else if (d.type === 'product') {
