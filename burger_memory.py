@@ -194,6 +194,46 @@ def build_memory_context(chat_id: str, message: str = "") -> str:
     return "\n".join(lines)
 
 
+def save_agent_plan(chat_id: str, plan: Dict[str, Any], status: str = "draft") -> None:
+    plan_id = str(plan.get("plan_id") or plan.get("id") or "")
+    if not plan_id:
+        return
+    payload = json.dumps(plan, ensure_ascii=False, default=str)
+    with _conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO agent_plans(id, chat_id, raw_message, intent, status, requires_confirmation, plan_json, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM agent_plans WHERE id=?), ?), ?)",
+            (plan_id, str(chat_id), plan.get("raw_message", "")[:2000], plan.get("intent", ""), status,
+             1 if plan.get("requires_confirmation") else 0, payload, plan_id, _now(), _now()),
+        )
+
+
+def save_tool_run(plan_id: str, job_id: str, tool_name: str, args: Dict[str, Any], result: Dict[str, Any], status: str = "success", error: str = "", started_at: int = None) -> str:
+    rid = f"tool_{int(time.time()*1000)}"
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO tool_runs(id, plan_id, job_id, tool_name, args_json, result_json, status, started_at, finished_at, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (rid, plan_id, job_id, tool_name, json.dumps(args, ensure_ascii=False, default=str), json.dumps(result, ensure_ascii=False, default=str)[:20000], status, started_at or _now(), _now(), error),
+        )
+    return rid
+
+
+def save_mockup_job(chat_id: str, job: Dict[str, Any]) -> None:
+    with _conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO mockup_jobs(id, chat_id, order_id, plan_id, requested_count, generated_count, status, cost_usd, duration_sec, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (job.get("id"), str(chat_id), job.get("order_id"), job.get("plan_id"), job.get("requested_count", 0), job.get("generated_count", 0), job.get("status", "completed"), job.get("cost_usd"), job.get("duration_sec"), job.get("created_at", _now()), job.get("completed_at", _now())),
+        )
+
+
+def save_mockup_image(image: Dict[str, Any]) -> None:
+    with _conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO mockup_images(id, job_id, order_id, scene_index, scene_prompt, image_url, local_path, version, parent_image_id, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (image.get("id"), image.get("job_id"), image.get("order_id"), image.get("scene_index"), image.get("scene_prompt"), image.get("image_url"), image.get("local_path"), image.get("version", 1), image.get("parent_image_id"), json.dumps(image.get("metadata", {}), ensure_ascii=False, default=str), image.get("created_at", _now())),
+        )
+
+
 def record_turn(chat_id: str, user: str, assistant: str) -> None:
     remember_event(chat_id, "turn", {"user": user[:1000], "assistant": assistant[:1000]})
 

@@ -156,20 +156,13 @@ a{color:var(--accent);text-decoration:none}
 .loading-dot span:nth-child(3){animation-delay:.4s}
 @keyframes bounce{0%,80%,100%{transform:scale(.6);opacity:.3}40%{transform:scale(1);opacity:1}}
 
-/* V2 cards */
-.plan-card,.timeline,.gallery-card{background:linear-gradient(180deg,#111827,#0b1220);border:1px solid rgba(255,255,255,.10);border-radius:18px;padding:16px;box-shadow:0 16px 48px rgba(2,6,23,.18);color:#f9fafb;margin:6px 0}
-.plan-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px}.plan-head h3{font-size:18px;margin:0}.plan-meta,.mock-meta{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.pill{font-size:12px;color:#cbd5e1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);padding:6px 10px;border-radius:999px}.scene-list{display:flex;flex-direction:column;gap:9px;margin-top:12px}.scene-item{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:11px}.scene-no{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#fb923c;font-weight:800;margin-bottom:5px}.scene-prompt{color:#e5e7eb;font-size:13px;line-height:1.5}.action-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.v2-btn{border:none;border-radius:12px;padding:11px 14px;font-weight:700;cursor:pointer;font-family:inherit}.v2-btn.primary{background:var(--accent);color:#fff}.v2-btn.ghost{background:rgba(255,255,255,.09);color:#e5e7eb;border:1px solid rgba(255,255,255,.12)}.v2-btn:hover{filter:brightness(1.06)}
-.timeline{margin-top:12px;padding:12px}.timeline-title{font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.12em;margin-bottom:9px;font-weight:800}.timeline-steps{display:grid;gap:7px}.step{display:flex;gap:8px;align-items:center;color:#cbd5e1;font-size:12px}.dot{width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.12)}
-.gallery-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.image-card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);border-radius:16px;overflow:hidden}.image-card img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;background:#030712}.image-info{padding:12px}.image-title{font-weight:800;color:#fff;margin-bottom:4px}.image-scene{color:#cbd5e1;font-size:12px;min-height:18px}.image-actions{display:flex;gap:8px;margin-top:10px}.image-actions a,.image-actions button{flex:1;text-align:center;text-decoration:none;border-radius:10px;padding:9px 10px;font-size:12px;font-weight:700;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.08);color:#e5e7eb;cursor:pointer}.error-card{background:#2a0f13;border:1px solid rgba(239,68,68,.35);color:#fecaca;border-radius:14px;padding:14px}
 /* Responsive */
 @media(max-width:768px){
  .sidebar{display:none}
  .chat-area{padding:16px}
  .chat-input-area{padding:12px 16px}
  .settings-panel{width:95vw;max-height:90vh}
- .msg-bubble{max-width:94%;padding:12px}
- .gallery-grid{grid-template-columns:1fr}
- .chat-input-wrap{gap:8px}.btn-send{padding:14px 16px}.upload-btn,.btn-send{min-height:56px;height:56px}
+ .msg-bubble{max-width:90%}
 }
 </style>
 </head>
@@ -333,8 +326,6 @@ a{color:var(--accent);text-decoration:none}
 let chatHistory = [];
 let currentSettings = {};
 const CHAT_ID = 'web';
-let pendingPlan = null; // track pending plan for confirm/edit
-let timelineSteps = 0; // simple counter for tool timeline
 
 // ── INIT ──
 async function init() {
@@ -379,168 +370,59 @@ async function sendMessage() {
     let r = await fetch('/api/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: msg, history: chatHistory, chat_id: CHAT_ID, session_id: CHAT_ID})
+      body: JSON.stringify({message: msg, history: chatHistory, chat_id: CHAT_ID})
     });
     let d = await r.json();
     loadingEl.remove();
 
-    // Show tool timeline mock
-    showTimeline(d.type);
-
-    if (d.type === 'plan_preview') {
-      renderPlanPreview(d);
+    if (d.type === 'mockup') {
+      let m = d.meta || {};
+      let html = `<p style="font-weight:600;margin-bottom:10px">Mockup ready</p>
+        <div class="result-card">
+          <div class="result-grid">
+            <div><span>ORDER</span><strong>${escapeHtml(m.order || '')}</strong></div>
+            <div><span>PRODUCT</span><strong>${escapeHtml(m.product || '')}</strong></div>
+            <div><span>COLOR</span><strong>${escapeHtml(m.color || '')}</strong></div>
+            <div><span>PROVIDER</span><strong>${escapeHtml(m.provider || '')}</strong></div>
+            <div class="success"><span>INTEGRITY</span><strong>${escapeHtml(String(m.integrity || ''))}</strong></div>
+            <div><span>SIZE</span><strong>${escapeHtml(m.size || '')}</strong></div>
+            <div><span>TIME</span><strong>${escapeHtml(m.time || '')}</strong></div>
+            <div class="cost"><span>COST</span><strong>${escapeHtml(m.cost || '')}</strong></div>
+          </div>
+        </div>`;
+      if (Array.isArray(d.images) && d.images.length) {
+        html += `<div class="result-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-top:10px">`;
+        d.images.forEach((im, idx) => {
+          html += `<div><img src="${escapeHtml(im.url || '')}" alt="mockup ${idx+1}" class="mockup-img"><strong>${escapeHtml(im.scene || ('Mockup '+(idx+1)))}</strong></div>`;
+        });
+        html += `</div>`;
+      } else if (d.image) html += `<img src="${escapeHtml(d.image)}" alt="mockup" class="mockup-img">`;
+      addMessage('bot', html);
       addToHistory(msg);
-    } else if (d.type === 'mockup') {
-      renderMockupGallery(d);
+    } else if (d.type === 'product') {
+      let m = d.meta || {};
+      let html = `<p style="font-weight:600;margin-bottom:10px">${escapeHtml(d.content || 'Dạ anh, đây là sản phẩm em tìm được.')}</p>`;
+      if (d.image) html += `<img src="${escapeHtml(d.image)}" alt="product" class="mockup-img">`;
+      html += `<div class="result-card">
+          <div class="result-grid">
+            <div><span>CODE</span><strong>${escapeHtml(m.code || '')}</strong></div>
+            <div><span>NAME</span><strong>${escapeHtml(m.name || '')}</strong></div>
+          </div>
+        </div>`;
+      addMessage('bot', html);
       addToHistory(msg);
     } else if (d.type === 'error') {
-      addMessage('bot', `<div class="error-card">⚠️ ${escapeHtml(d.content || 'Lỗi không xác định')}</div>`);
+      addMessage('bot', `<p>Dạ, em gặp lỗi: ${escapeHtml(d.content)}</p>`);
     } else {
-      // text or fallback
       addMessage('bot', renderTextContent(d.content || ''));
     }
   } catch(e) {
     loadingEl.remove();
-    addMessage('bot', `<div class="error-card">⚠️ Network error: ${escapeHtml(e.message)}</div>`);
+    addMessage('bot', `<p>Network error: ${escapeHtml(e.message)}</p>`);
   }
   loading = false;
   document.getElementById('sendBtn').disabled = false;
   inp.focus();
-}
-
-function showTimeline(type) {
-  timelineSteps++;
-  let steps = [
-    {label:'Phân tích yêu cầu',done:true},
-    {label:'Truy vấn thông tin',done:true},
-    {label:'Lên kế hoạch tạo ảnh',done:type==='plan_preview'||type==='mockup'},
-    {label:'Tạo ảnh AI',done:type==='mockup'}
-  ];
-  let html = `<div class="timeline"><div class="timeline-title">⏳ Tiến trình</div><div class="timeline-steps">`;
-  steps.forEach(s => {
-    html += `<div class="step"><span class="dot" style="${s.done?'background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.12)':'background:#334155;box-shadow:none'}"></span> ${escapeHtml(s.label)}</div>`;
-  });
-  html += `</div></div>`;
-  let tl = document.querySelector('.timeline:last-child');
-  if (tl) tl.remove();
-  let c = document.getElementById('chatInner');
-  let dummy = document.createElement('div');
-  dummy.innerHTML = html;
-  c.appendChild(dummy.firstElementChild);
-  document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
-}
-
-function renderPlanPreview(d) {
-  pendingPlan = {plan:d.plan, plan_id:d.plan_id};
-  let plan = d.plan || {};
-  let scenes = plan.scenes || d.scenes || [];
-  // compute total ảnh
-  let totalImages = scenes.length;
-  if (plan.explicit_counts) {
-    totalImages = Object.values(plan.explicit_counts).reduce((a,b)=>a+b, 0);
-  }
-  let html = `<div class="plan-card">
-    <div class="plan-head">
-      <h3>📋 Plan dự kiến</h3>
-    </div>
-    <div class="plan-meta">
-      <span class="pill">🆔 Order: ${escapeHtml(plan.order_id || plan.order || '')}</span>
-      <span class="pill">📸 Số ảnh: ${totalImages}</span>
-    </div>
-    <div class="scene-list">`;
-  scenes.forEach((sc, i) => {
-    let scNum = sc.scene_number || sc.scene_no || (i + 1);
-    let promptText = sc.prompt || sc.description || '';
-    html += `<div class="scene-item">
-      <div class="scene-no">Ảnh ${escapeHtml(String(scNum))}</div>
-      <div class="scene-prompt">${escapeHtml(promptText)}</div>
-    </div>`;
-  });
-  html += `</div>
-    <div class="action-row">
-      <button class="v2-btn primary" onclick="confirmPlan()">✅ Xác nhận & Tạo</button>
-      <button class="v2-btn ghost" onclick="editPlan()">✏️ Sửa Plan</button>
-    </div>
-  </div>`;
-  addMessage('bot', html);
-}
-
-async function confirmPlan() {
-  if (!pendingPlan) return;
-  addMessage('bot', '<div class="loading-dot"><span></span><span></span><span></span></div>', 'loading confirmLoading');
-  try {
-    let r = await fetch('/api/chat', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({message:'ok tạo', session_id:CHAT_ID})
-    });
-    let d = await r.json();
-    let el = document.querySelector('.confirmLoading');
-    if (el) el.remove();
-    showTimeline('mockup');
-    if (d.type === 'mockup') renderMockupGallery(d);
-    else if (d.type === 'error') addMessage('bot', `<div class="error-card">⚠️ ${escapeHtml(d.content)}</div>`);
-    else addMessage('bot', renderTextContent(d.content || ''));
-  } catch(e) {
-    let el = document.querySelector('.confirmLoading');
-    if (el) el.remove();
-    addMessage('bot', `<div class="error-card">⚠️ ${escapeHtml(e.message)}</div>`);
-  }
-  pendingPlan = null;
-}
-
-function editPlan() {
-  document.getElementById('userInput').value = 'Sửa plan: ';
-  document.getElementById('userInput').focus();
-  pendingPlan = null;
-}
-
-function renderMockupGallery(d) {
-  let html = `<p style="font-weight:600;margin-bottom:8px">${escapeHtml(d.content || 'Dạ anh, đây là mockup em làm ạ.')}</p>`;
-  let m = d.meta || {};
-  if (m.order || m.product || m.color) {
-    html += `<div class="mock-meta">`;
-    if (m.order) html += `<span class="pill">🆔 ${escapeHtml(m.order)}</span>`;
-    if (m.product) html += `<span class="pill">📦 ${escapeHtml(m.product)}</span>`;
-    if (m.color) html += `<span class="pill">🎨 ${escapeHtml(m.color)}</span>`;
-    html += `</div>`;
-  }
-  let images = d.images || [];
-  if (images.length) {
-    html += `<div class="gallery-grid">`;
-    images.forEach((im, idx) => {
-      let imgSrc = normalizeOutputUrl(im.url || '');
-      let sc = im.scene || '';
-      let imgIdx = im.index || (idx + 1);
-      let imgId = im.image_id || '';
-      html += `<div class="image-card">
-        <img src="${escapeHtml(imgSrc)}" alt="mockup ${imgIdx}" loading="lazy">
-        <div class="image-info">
-          <div class="image-title">Ảnh ${escapeHtml(String(imgIdx))}</div>
-          <div class="image-scene">${escapeHtml(sc)}</div>
-          <div class="image-actions">
-            <a href="${escapeHtml(imgSrc)}" download="${escapeHtml(String(imgIdx))}.png">⬇️ Tải</a>
-            <button onclick="refineImage('${escapeHtml(String(imgIdx))}')">🔄 Tinh chỉnh</button>
-          </div>
-        </div>
-      </div>`;
-    });
-    html += `</div>`;
-  } else if (d.image) {
-    html += `<img src="${escapeHtml(normalizeOutputUrl(d.image))}" alt="mockup" class="mockup-img">`;
-  }
-  addMessage('bot', html);
-}
-
-function refineImage(idx) {
-  document.getElementById('userInput').value = `Tinh chỉnh ảnh ${idx}: `;
-  document.getElementById('userInput').focus();
-}
-
-function normalizeOutputUrl(url) {
-  let u = String(url || '').trim();
-  if (!u) return '';
-  if (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('/')) return u;
-  return '/outputs/' + u.replace(/^outputs\//, '');
 }
 
 function addMessage(role, content, cssClass = '') {
@@ -569,12 +451,11 @@ function addToHistory(msg) {
 async function newChat() {
   document.getElementById('chatInner').innerHTML = `<div class="empty-state"><div class="slogan-mark">JOURNEY<br>OF YOU</div></div>`;
   chatHistory = [];
-  pendingPlan = null;
   try {
     await fetch('/api/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: '/new', chat_id: CHAT_ID, session_id: CHAT_ID})
+      body: JSON.stringify({message: '/new', chat_id: CHAT_ID})
     });
   } catch(e) {}
 }

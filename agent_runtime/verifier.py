@@ -17,4 +17,13 @@ def verify_mockup_result(result: Dict[str, Any]) -> Dict[str, Any]:
             problems.append(f"image {i} missing url")
         if not im.get("scene"):
             problems.append(f"image {i} missing scene")
-    return {"ok": not problems, "problems": problems}
+    visual = {"ok": True, "checks": [], "problems": []}
+    if images:
+        try:
+            from .visual_verifier import verify_images
+            visual = verify_images(images)
+            if not visual.get("ok"):
+                problems.append("visual file check failed")
+        except Exception:
+            pass
+    return {"ok": not problems, "problems": problems, "visual": visual}

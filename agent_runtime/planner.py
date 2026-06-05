@@ -113,6 +113,11 @@ def deterministic_plan(message: str, context: Dict[str, Any]) -> AgentPlan:
     if _has_list_order_intent(text) and not _has_mockup_intent(text):
         return AgentPlan(intent=INTENT_LIST_ORDERS, confidence=0.9, tool_plan=[ToolPlanStep(1, "list_orders", {})], plan_id=plan_id, session_id=session_id, raw_message=text)
 
+    if any(k in lower for k in ["sửa ảnh", "đổi ảnh", "chỉnh ảnh", "edit scene"]):
+        pending = context.get("pending_plan") or {}
+        if pending and pending.get("scenes"):
+            return AgentPlan(intent=INTENT_EDIT_PLAN, confidence=0.92, plan_id=plan_id, session_id=session_id, raw_message=text)
+
     order_ids = extract_order_ids(text)
     current_order = (context.get("session") or {}).get("current_order_id") or context.get("current_order_id")
     order_id = order_ids[0] if order_ids else current_order

@@ -10,7 +10,10 @@ import uuid
 import traceback
 from typing import Any, Dict, List, Optional
 
+import burger_memory as mem
 from .plan_schema import AgentPlan, INTENT_REFINE
+
+ROOT = None  # set at runtime
 
 
 class Executor:
@@ -25,6 +28,8 @@ class Executor:
         plan.status = "executing"
 
         job_id = f"job_{uuid.uuid4().hex[:12]}"
+        self._current_job_id = job_id
+        self._current_plan_id = plan.plan_id or ""
         order_id = plan.order_id or ""
         started = time.time()
 
@@ -107,7 +112,9 @@ class Executor:
                 if result.get("error"):
                     errors.append({"index": scene.index, "error": result["error"]})
                 else:
+                    img_id = f"img_{uuid.uuid4().hex[:10]}"
                     mockups.append({
+                        "id": img_id,
                         "index": scene.index,
                         "scene": scene_prompt,
                         "mockup_url": result.get("mockup_url", ""),
@@ -118,6 +125,14 @@ class Executor:
                         "cost": result.get("cost", ""),
                         "time": result.get("time", ""),
                     })
+                    try:
+                        mem.save_mockup_image({
+                            "id": img_id, "job_id": job_id, "order_id": order_id,
+                            "scene_index": scene.index, "scene_prompt": scene_prompt,
+                            "image_url": result.get("mockup_url", ""), "version": 1,
+                        })
+                    except Exception:
+                        pass
             except Exception as e:
                 errors.append({"index": scene.index, "error": str(e)})
 
@@ -148,7 +163,7 @@ class Executor:
                     pass
 
         mockups.sort(key=lambda m: m["index"])
-        images = [{"url": m["mockup_url"], "scene": m["scene"], "index": m["index"]} for m in mockups]
+        images = [{"url": m["mockup_url"], "scene": m["scene"], "index": m["index"], "image_id": m.get("id")} for m in mockups]
 
         product_name = order_data.get("product") or (mockups[0].get("product", "") if mockups else "")
         color = mockups[0].get("color", "") if mockups else ""
@@ -161,6 +176,20 @@ class Executor:
             lines.append(f"Còn {len(errors)} ảnh chưa tạo được: {', '.join(str(e['index']) for e in errors)}")
         if product_name:
             lines.append(f"\nSản phẩm: {product_name} ({color})" if color else f"\nSản phẩm: {product_name}")
+
+        try:
+            mem.save_mockup_job(plan.session_id or "web", {
+                "id": job_id,
+                "order_id": order_id,
+                "plan_id": plan.plan_id,
+                "requested_count": len(scenes),
+                "generated_count": len(mockups),
+                "status": "completed" if not errors else "partial",
+                "created_at": int(time.time()),
+                "completed_at": int(time.time()),
+            })
+        except Exception:
+            pass
 
         return {
             "type": "mockup",
@@ -194,7 +223,17 @@ class Executor:
         }
 
     def _execute_tool(self, name: str, args: dict) -> Any:
-        return self._agent._execute_tool(name, args)
+        started = int(time.time())
+        result = self._agent._execute_tool(name, args)
+        try:
+            mem.save_tool_run(
+                getattr(self, "_current_plan_id", ""), getattr(self, "_current_job_id", ""),
+                name, args, result if isinstance(result, dict) else {"text": result},
+                status="success", started_at=started,
+            )
+        except Exception:
+            pass
+        return result
 
     def _format_orders(self, data: Any) -> str:
         if not data or isinstance(data, dict) and data.get("error"):

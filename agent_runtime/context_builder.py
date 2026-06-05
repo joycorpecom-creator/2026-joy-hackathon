@@ -19,6 +19,7 @@ def build_context(session_id: str, user_message: str = "") -> Dict[str, Any]:
         },
         "profile": profile,
         "recent_memory": recent,
+        "pending_plan": state.get("pending_plan"),
         "last_mockup_job": last_job,
         "available_tools": TOOL_REGISTRY,
         "user_message": user_message,
