@@ -48,9 +48,17 @@ def composite_design_on_product(product_image: Image.Image, design_path: str | P
 
 
 def composite_product_into_scene(scene: Image.Image, product: Image.Image, scale: float = 0.55) -> tuple[Image.Image, tuple[int, int, int, int]]:
-    """Place product layer into lifestyle scene with shadow."""
+    """Place product layer into lifestyle scene with shadow.
+
+    Removes product background automatically before compositing.
+    """
+    from image_preprocess import remove_product_background, trim_transparent
+
     scene = scene.convert("RGBA")
     product = product.convert("RGBA")
+    # Remove BP product background to avoid rectangular cutout artifacts.
+    product = trim_transparent(remove_product_background(product), padding=18)
+    product = Image.alpha_composite(Image.new("RGBA", product.size, (255, 255, 255, 0)), product)
     max_w = int(scene.width * scale)
     max_h = int(scene.height * 0.76)
     product.thumbnail((max_w, max_h), Image.LANCZOS)

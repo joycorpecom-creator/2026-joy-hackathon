@@ -145,6 +145,18 @@ def generate_uploaded_design_product_mockup(
     short_code = short_code or product.get("short_code") or "PRODUCT"
     product_name = product_name or product.get("display_name") or product.get("name") or short_code
     color_name = color_name or product.get("color_name") or product.get("color") or "as shown"
+
+    # ── Validate uploaded design ──
+    from image_preprocess import validate_design_file
+    design_diag = validate_design_file(design_path)
+    warnings = design_diag.get("warnings", [])
+    if any(str(w).startswith("possible_product_mockup") for w in warnings):
+        raise RuntimeError(
+            "Uploaded image looks like a product/mockup photo, not a flat print design. "
+            "Please upload the original flat artwork PNG/SVG (preferably as Telegram document/file, not photo) so the print can be preserved exactly."
+        )
+
+    # ── Get BP product image ──
     base_url = pick_base_image(product)
     if not base_url:
         raise RuntimeError(f"Product has no base mockup image: {short_code}")
@@ -201,7 +213,12 @@ def generate_uploaded_design_product_mockup(
         from design_compositor import composite_product_into_scene
         final, product_scene_bbox = composite_product_into_scene(scene, product_with_design)
         integrity = integrity or flat_integrity
-        provider = "gemini-background+composite" if scene else "deterministic-composite"
+        provider = "gemini-background+composite"
+        if gemini_img is None:
+            # Both Gemini paths failed — deterministic placeholder scene.
+            if not scene:
+                provider = "deterministic-composite"
+            # Scene is a generated/fallback image; product was bg-removed.
 
     if final.width < 1500 or final.height < 1500:
         final = final.resize((1600, 1600), Image.LANCZOS)
@@ -220,6 +237,8 @@ def generate_uploaded_design_product_mockup(
         "seconds": round(time.time() - started, 2),
         "cost_usd": 0.0 if "composite" in provider else round(0.08 * (final.width * final.height) / (1600 * 1600), 2),
         "provider": provider,
+        "design_diagnostics": design_diag,
+        "warnings": warnings,
     }
 
 

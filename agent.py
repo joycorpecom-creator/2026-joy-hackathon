@@ -620,6 +620,12 @@ class BurgerMockupAgent:
             # Check if the last tool call was a mockup — if so, return it directly
             last_fc, result = executed_results[-1]
             if last_fc.name in ("create_mockup_from_order", "create_mockup_from_product", "create_mockup_from_uploaded_design"):
+                if result.get("error"):
+                    final_text = f"Dạ, có lỗi khi tạo mockup: {result['error']}"
+                    history.append(types.Content(role="user", parts=[types.Part.from_text(text=message)]))
+                    history.append(types.Content(role="model", parts=[types.Part.from_text(text=final_text)]))
+                    self._save_session(chat_id)
+                    return {"type": "text", "content": final_text}
                 print(">>> MOCKUP TOOL DETECTED, returning result", flush=True)
                 mockup_url = result.get("mockup_url", "")
                 provider = result.get("provider", "unknown")
@@ -663,6 +669,7 @@ class BurgerMockupAgent:
                         "cost": cost,
                         "product": product,
                         "color": color,
+                        "warnings": result.get("warnings", []),
                     },
                 }
 

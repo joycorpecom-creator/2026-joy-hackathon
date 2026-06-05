@@ -123,12 +123,17 @@ async def process_message(token: str, chat_id: int, text: str, msg: dict = None)
             send_text(token, chat_id, caption)
     elif result.get("type") == "mockup":
         meta = result.get("meta", {})
+        warnings = meta.get("warnings") or []
+        warn_text = ""
+        if warnings:
+            warn_text = "\nNote: input nên là flat PNG/document để giữ nền trong suốt."
         caption = (
             f"Mockup ready\n"
             f"Order: {meta.get('order','?')}\n"
             f"Product: {meta.get('product','?')}\n"
             f"Size: {meta.get('size','?')} | Integrity: {meta.get('integrity','?')}\n"
             f"Time: {meta.get('time','?')} | Cost: {meta.get('cost','?')}"
+            f"{warn_text}"
         )
         img_path = result.get("image", "")
         abs_path = str((ROOT / "outputs" / os.path.basename(img_path)).resolve())
