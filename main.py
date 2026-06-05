@@ -94,11 +94,56 @@ async def chat(req: Request):
     body = await req.json()
     msg = body.get("message", "").strip()
     try:
-        chat_id = str(body.get("chat_id") or "web")
+        chat_id = str(body.get("chat_id") or body.get("session_id") or "web")
         d = await handle_message(msg, chat_id=chat_id)
         return JSONResponse(d)
     except Exception as e:
         return JSONResponse({"type": "error", "content": str(e)})
+
+
+@app.post("/api/agent/plan")
+async def api_agent_plan(req: Request):
+    body = await req.json()
+    msg = (body.get("message") or "").strip()
+    session_id = str(body.get("session_id") or body.get("chat_id") or "web")
+    from agent_runtime.context_builder import build_context
+    from agent_runtime.planner import Planner
+    from agent_runtime.plan_schema import plan_display_text
+    from agent_runtime.plan_validator import validate_plan
+    ctx = build_context(session_id, msg)
+    plan = Planner().plan(msg, ctx)
+    ok, errors = validate_plan(plan)
+    return JSONResponse({"ok": ok, "errors": errors, "plan": plan.to_dict(), "content": plan_display_text(plan)})
+
+
+@app.post("/api/agent/execute")
+async def api_agent_execute(req: Request):
+    body = await req.json()
+    session_id = str(body.get("session_id") or body.get("chat_id") or "web")
+    plan = body.get("plan")
+    if not plan:
+        import burger_memory as mem
+        plan = (mem.get_state(session_id) or {}).get("pending_plan")
+    if not plan:
+        return JSONResponse({"type": "text", "content": "Dạ hiện không có plan để execute."})
+    from core import get_orchestrator
+    from agent_runtime.orchestrator import plan_from_json
+    p = plan_from_json(plan)
+    p.requires_confirmation = False
+    result = get_orchestrator()._executor.execute(p)
+    return JSONResponse(result)
+
+
+@app.get("/api/tools")
+async def api_tools():
+    from agent_runtime.registry import TOOL_REGISTRY
+    return JSONResponse({"tools": TOOL_REGISTRY, "count": len(TOOL_REGISTRY)})
+
+
+@app.get("/api/state/{session_id}")
+async def api_state(session_id: str):
+    import burger_memory as mem
+    return JSONResponse(mem.get_state(session_id))
 
 
 # ── SERVE OUTPUTS ──

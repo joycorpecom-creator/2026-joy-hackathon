@@ -129,6 +129,16 @@ async def process_message(token: str, chat_id: int, text: str, msg: dict = None)
 
 def main():
     import asyncio
+    import fcntl
+    lock_path = ROOT / "telegram_poller.lock"
+    lock_file = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log.error("Another Telegram poller is already running; exiting to avoid duplicate replies.")
+        return
+    lock_file.write(str(os.getpid()))
+    lock_file.flush()
     offset = 0
     log.info("Telegram poller starting")
     while True:

@@ -41,6 +41,27 @@ def _conn() -> sqlite3.Connection:
     c.execute(
         "CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(chat_id, kind, text)"
     )
+    # V2 agent runtime tables: plan-first orchestration, jobs, images, tool traces.
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS agent_plans ("
+        "id TEXT PRIMARY KEY, chat_id TEXT, raw_message TEXT, intent TEXT, status TEXT, "
+        "requires_confirmation INTEGER, plan_json TEXT, created_at INTEGER, updated_at INTEGER)"
+    )
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS mockup_jobs ("
+        "id TEXT PRIMARY KEY, chat_id TEXT, order_id TEXT, plan_id TEXT, requested_count INTEGER, "
+        "generated_count INTEGER, status TEXT, cost_usd REAL, duration_sec REAL, created_at INTEGER, completed_at INTEGER)"
+    )
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS mockup_images ("
+        "id TEXT PRIMARY KEY, job_id TEXT, order_id TEXT, scene_index INTEGER, scene_prompt TEXT, "
+        "image_url TEXT, local_path TEXT, version INTEGER, parent_image_id TEXT, metadata_json TEXT, created_at INTEGER)"
+    )
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS tool_runs ("
+        "id TEXT PRIMARY KEY, plan_id TEXT, job_id TEXT, tool_name TEXT, args_json TEXT, result_json TEXT, "
+        "status TEXT, started_at INTEGER, finished_at INTEGER, error TEXT)"
+    )
     # Older dev build used contentless FTS, causing stored chat_id/kind to read as NULL.
     try:
         bad = c.execute("SELECT chat_id FROM events_fts LIMIT 1").fetchone()
