@@ -58,3 +58,11 @@ def test_order_id_info_request_is_not_misclassified_as_list_orders():
     )
     assert plan.intent == "get_order_info"
     assert plan.order_id == "DEMO-1001"
+
+
+def test_format_orders_supports_normalized_orders_key():
+    from agent_runtime.executor import Executor
+    ex = Executor(agent=None)
+    text = ex._format_orders({"orders": [{"id": "A1", "product": "Mug", "state": "paid"}]})
+    assert "A1" in text
+    assert "Mug" in text

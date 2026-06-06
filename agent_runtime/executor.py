@@ -237,16 +237,24 @@ class Executor:
         return result
 
     def _format_orders(self, data: Any) -> str:
-        if not data or isinstance(data, dict) and data.get("error"):
+        if not data or (isinstance(data, dict) and data.get("error")):
             return "Dạ, không lấy được danh sách order."
-        items = data.get("items") or data.get("data", {}).get("results") or []
+        if not isinstance(data, dict):
+            return "Dạ, không lấy được danh sách order."
+        items = data.get("orders") or data.get("items") or data.get("data", {}).get("results") or data.get("data", {}).get("result") or []
         if not items:
             return "Dạ hiện không có order nào."
-        lines = ["Dạ anh, đây là các order:"]
+        lines = [f"Dạ anh, em lấy được {len(items)} order gần đây:"]
         for item in items[:10]:
-            oid = item.get("order_id") or item.get("id", "")
-            product = item.get("product") or item.get("items", [{}])[0].get("name", "")
-            status = item.get("status") or item.get("fulfillment_status", "?")
+            if not isinstance(item, dict):
+                continue
+            oid = item.get("order_id") or item.get("id") or item.get("reference_order") or ""
+            product = item.get("product") or ""
+            if not product:
+                raw_items = item.get("items") or item.get("line_items") or []
+                first = raw_items[0] if raw_items and isinstance(raw_items[0], dict) else {}
+                product = first.get("name") or first.get("product_name") or first.get("catalog_sku") or ""
+            status = item.get("state") or item.get("status") or item.get("fulfillment_status") or "?"
             lines.append(f"- {oid}: {product} ({status})")
         return "\n".join(lines)
 
