@@ -49,3 +49,12 @@ def test_pending_plan_edit_intent_detected():
         {"session": {"id": "t"}, "pending_plan": {"scenes": [{"index": 3, "prompt": "old"}]}}
     )
     assert plan.intent == "edit_plan"
+
+
+def test_order_id_info_request_is_not_misclassified_as_list_orders():
+    plan = deterministic_plan(
+        "lấy toàn bộ thông tin order_id DEMO-1001",
+        {"session": {"id": "t"}}
+    )
+    assert plan.intent == "get_order_info"
+    assert plan.order_id == "DEMO-1001"

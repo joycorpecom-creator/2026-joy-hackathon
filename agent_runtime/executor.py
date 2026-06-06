@@ -34,18 +34,19 @@ class Executor:
         started = time.time()
 
         try:
-            # Step 1: fetch order info if needed
+            # Step 1: fetch order info only for tool flows that need product context.
             order_data = {}
-            if order_id:
+            if order_id and plan.intent in ("create_mockup_batch", "create_mockup_single", INTENT_REFINE):
                 order_data = self._execute_tool("bp_get_order", {"order_id": order_id})
-                if not order_data or order_data.get("error"):
+                if not isinstance(order_data, dict) or not order_data or order_data.get("error"):
+                    err = order_data.get("error") if isinstance(order_data, dict) else str(order_data)
                     return {
                         "type": "text",
-                        "content": f"Dạ, lỗi khi lấy order {order_id}: {order_data.get('error', 'không tìm thấy')}",
+                        "content": f"Dạ, lỗi khi lấy order {order_id}: {err or 'không tìm thấy'}",
                         "job_id": job_id,
                     }
+            # Step 2: execute intent
 
-            # Step 2: generate mockups
             if plan.intent in ("create_mockup_batch", "create_mockup_single"):
                 result = self._generate_batch(plan, job_id, order_data)
                 return result
@@ -250,24 +251,25 @@ class Executor:
         return "\n".join(lines)
 
     def _format_order(self, data: Any) -> str:
-        if not data:
+        if not data or not isinstance(data, dict):
             return "Dạ không tìm thấy order."
         oid = data.get("order_id") or data.get("id", "")
         product = data.get("product") or ""
-        status = data.get("status") or data.get("fulfillment_status", "?")
-        price = data.get("total") or data.get("price", "?")
-        return f"Dạ order {oid}:\n- Sản phẩm: {product}\n- Trạng thái: {status}\n- Giá: {price}"
+        state = data.get("state") or data.get("status", "?")
+        amount = data.get("amount") or "?"
+        lines = [f"Dạ order {oid}:", f"- Sản phẩm: {product}", f"- Trạng thái: {state}", f"- Giá: {amount}"]
+        if data.get("mockup_url"):
+            lines.append(f"- Ảnh mockup: {data['mockup_url']}")
+        return "\n".join(lines)
 
     def _extract_order_images(self, data: Any) -> list:
-        if not data:
+        if not data or not isinstance(data, dict):
             return []
         images = []
-        items = data.get("items") or [data]
-        for item in items:
-            for m in item.get("mockups") or []:
-                if m.get("src"):
-                    images.append({"url": m["src"], "scene": "order mockup", "index": len(images) + 1})
-            for d in item.get("designs") or []:
-                if d.get("src"):
-                    images.append({"url": d["src"], "scene": "design preview", "index": len(images) + 1})
+        mp = data.get("mockup_url") or ""
+        if mp:
+            images.append({"url": mp, "scene": "order mockup", "index": 1})
+        dp = data.get("design_url") or ""
+        if dp and dp != mp:
+            images.append({"url": dp, "scene": "design", "index": len(images) + 1})
         return images
