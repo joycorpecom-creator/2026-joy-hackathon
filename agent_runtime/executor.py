@@ -11,7 +11,7 @@ import traceback
 from typing import Any, Dict, List, Optional
 
 import burger_memory as mem
-from .plan_schema import AgentPlan, INTENT_REFINE
+from .plan_schema import AgentPlan, INTENT_REFINE, INTENT_LIST_SELLER_PRODUCTS, INTENT_GET_SELLER_PRODUCT, INTENT_CREATE_FROM_SELLER_PRODUCT
 
 ROOT = None  # set at runtime
 
@@ -51,6 +51,10 @@ class Executor:
                 result = self._generate_batch(plan, job_id, order_data)
                 return result
 
+            if plan.intent == INTENT_CREATE_FROM_SELLER_PRODUCT:
+                result = self._generate_product_batch(plan, job_id)
+                return result
+
             elif plan.intent == INTENT_REFINE:
                 result = self._refine(plan, job_id, order_data)
                 return result
@@ -64,6 +68,18 @@ class Executor:
                 data = self._execute_tool("bp_get_order", {"order_id": order_id or plan.order_id})
                 content = self._format_order(data)
                 images = self._extract_order_images(data)
+                return {"type": "text", "content": content, "images": images, "job_id": job_id}
+
+            elif plan.intent == INTENT_LIST_SELLER_PRODUCTS:
+                data = self._execute_tool("bs_list_seller_products", {})
+                content = self._format_seller_products(data)
+                images = self._extract_seller_product_images(data)
+                return {"type": "text", "content": content, "images": images, "job_id": job_id}
+
+            elif plan.intent == INTENT_GET_SELLER_PRODUCT:
+                data = self._execute_tool("bs_get_seller_product", {"product_id": order_id or plan.order_id})
+                content = self._format_seller_product(data)
+                images = self._extract_seller_product_images(data)
                 return {"type": "text", "content": content, "images": images, "job_id": job_id}
 
             elif plan.intent == "greeting":
@@ -207,6 +223,55 @@ class Executor:
             },
         }
 
+    def _generate_product_batch(self, plan: AgentPlan, job_id: str) -> Dict[str, Any]:
+        product_id = plan.order_id or ""
+        mockups = []
+        errors = []
+        for scene in plan.scenes:
+            try:
+                full = scene.prompt
+                if scene.camera:
+                    full += f", {scene.camera}"
+                if scene.lighting:
+                    full += f", {scene.lighting}"
+                if scene.background:
+                    full += f", {scene.background}"
+                if scene.constraints:
+                    full += ". " + ". ".join(scene.constraints)
+                result = self._agent._execute_tool("create_mockup_from_seller_product", {"product_id": product_id, "scene": full})
+                if result.get("error"):
+                    errors.append({"index": scene.index, "error": result["error"]})
+                    continue
+                img_id = f"img_{uuid.uuid4().hex[:10]}"
+                mockups.append({
+                    "id": img_id, "index": scene.index, "scene": scene.prompt,
+                    "mockup_url": result.get("mockup_url", ""), "product": result.get("product", ""),
+                    "color": result.get("color", ""), "provider": result.get("provider", ""),
+                    "integrity": result.get("integrity", 0), "cost": result.get("cost", ""), "time": result.get("time", ""),
+                })
+                try:
+                    mem.save_mockup_image({"id": img_id, "job_id": job_id, "order_id": product_id, "scene_index": scene.index, "scene_prompt": scene.prompt, "image_url": result.get("mockup_url", ""), "version": 1})
+                except Exception:
+                    pass
+            except Exception as e:
+                errors.append({"index": scene.index, "error": str(e)})
+        mockups.sort(key=lambda m: m["index"])
+        images = [{"url": m["mockup_url"], "scene": m["scene"], "index": m["index"], "image_id": m.get("id")} for m in mockups]
+        product_name = mockups[0].get("product", "") if mockups else product_id
+        color = mockups[0].get("color", "") if mockups else ""
+        lines = [f"Dạ anh, em đã tạo xong {len(mockups)}/{len(plan.scenes)} mockup từ product {product_id}."]
+        for m in mockups:
+            lines.append(f"• Ảnh {m['index']}: {m['scene']}")
+        if errors:
+            lines.append(f"Còn {len(errors)} ảnh chưa tạo được: {', '.join(str(e['index']) for e in errors)}")
+        if product_name:
+            lines.append(f"\nSản phẩm: {product_name} ({color})" if color else f"\nSản phẩm: {product_name}")
+        try:
+            mem.save_mockup_job(plan.session_id or "web", {"id": job_id, "order_id": product_id, "plan_id": plan.plan_id, "requested_count": len(plan.scenes), "generated_count": len(mockups), "status": "completed" if not errors else "partial", "created_at": int(time.time()), "completed_at": int(time.time())})
+        except Exception:
+            pass
+        return {"type": "mockup", "content": "\n".join(lines), "images": images, "job_id": job_id, "meta": {"product": product_name, "product_id": product_id, "color": color, "count": len(mockups), "requested": len(plan.scenes), "errors": len(errors)}}
+
     def _refine(self, plan: AgentPlan, job_id: str, order_data: dict) -> Dict[str, Any]:
         step = plan.tool_plan[0] if plan.tool_plan else None
         if not step:
@@ -322,6 +387,86 @@ class Executor:
             lines.append(f"- Ảnh design: {data['design_url']}")
 
         return "\n".join(filter(None, lines))
+
+    def _format_seller_products(self, data: Any) -> str:
+        if not data or not isinstance(data, dict) or data.get("error"):
+            return "Dạ, không lấy được danh sách sản phẩm."
+        items = data.get("products") or []
+        if not items:
+            return "Dạ không có seller product nào."
+        lines = [f"Dạ anh, em lấy được {len(items)} seller product:"]
+        for p in items[:10]:
+            if not isinstance(p, dict):
+                continue
+            pid = p.get("id") or ""
+            title = p.get("title") or ""
+            state = p.get("state") or "?"
+            mu = p.get("mockup_url") or ""
+            line = f"- {pid}: {title} ({state})"
+            if mu:
+                line += f" | mockup: {mu}"
+            lines.append(line)
+        return "\n".join(lines)
+
+    def _format_seller_product(self, data: Any) -> str:
+        if not data or not isinstance(data, dict) or data.get("error"):
+            return "Dạ không tìm thấy sản phẩm."
+        pid = data.get("product_id") or ""
+        title = data.get("title") or ""
+        price = data.get("price") or ""
+        compare = data.get("compare_price") or ""
+        vendor = data.get("vendor") or ""
+        ptype = data.get("product_type") or ""
+        short_codes = data.get("short_codes") or []
+        design_src = data.get("design_src") or ""
+        mockup_src = data.get("mockup_src") or ""
+        lines = [f"Dạ anh, đây là seller product {pid}:",
+                 f"- Tên: {title}",
+                 f"- Giá: ${price}" if price else "",
+                 f"- Giá so sánh: ${compare}" if compare else "",
+                 f"- Vendor: {vendor}" if vendor else "",
+                 f"- Loại: {ptype}" if ptype else "",
+                 f"- Catalog: {', '.join(short_codes)}" if short_codes else ""]
+        if design_src and mockup_src and design_src != mockup_src:
+            lines.append(f"- Design: {design_src}")
+        if mockup_src:
+            lines.append(f"- Mockup: {mockup_src}")
+        designs = data.get("designs") or []
+        for d in designs:
+            if not isinstance(d, dict):
+                continue
+            print_area = f"printable: {d.get('printable_width')}x{d.get('printable_height')} @ ({d.get('printable_left')}, {d.get('printable_top')})" if d.get("printable_width") else ""
+            if d.get("type") or print_area:
+                lines.append(f"  - Design {d.get('type', '')}: {d.get('src', '')[:80]} {print_area}".strip())
+        variants = data.get("variants") or []
+        if variants:
+            lines.append(f"\nBiến thể ({len(variants)}):")
+            for v in variants[:8]:
+                vline = f"  - {v.get('color_name', '')} / {v.get('size_name', '')}: ${v.get('price', '')}"
+                if v.get("sku"):
+                    vline += f" [{v.get('sku')}]"
+                if v.get("mockup_src"):
+                    vline += f" | mockup"
+                lines.append(vline)
+        return "\n".join(filter(None, lines))
+
+    def _extract_seller_product_images(self, data: Any) -> list:
+        if not data or not isinstance(data, dict):
+            return []
+        images = []
+        mu = data.get("mockup_src") or data.get("mockup_url") or ""
+        du = data.get("design_src") or data.get("design_url") or ""
+        if mu:
+            images.append({"url": mu, "scene": "mockup", "index": 1})
+        if du and du != mu:
+            images.append({"url": du, "scene": "design", "index": len(images) + 1})
+        # Also track product-level images
+        mockups = data.get("mockups") or []
+        for m in mockups:
+            src = m.get("src") if isinstance(m, dict) else ""
+            if src and src not in [im["url"] for im in images]:
+                images.append({"url": src, "scene": "mockup", "index": len(images) + 1})
+        return images
 
     def _extract_order_images(self, data: Any) -> list:
         if not data or not isinstance(data, dict):

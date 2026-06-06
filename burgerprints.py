@@ -140,6 +140,46 @@ class BurgerPrintsClient:
             raise RuntimeError(f"'{code}' looks like a seller dashboard product id, not a BP catalog short_code.")
         return self._request("GET", f"/product/{code}")
 
+    # BurgerShop seller products (created products with design/mockup attached)
+    def bs_products(self, page: int = 1, page_size: int = 10, search: str = "") -> Dict[str, Any]:
+        params = {"page": page, "page_size": page_size}
+        if search:
+            params["search"] = search
+        url = "https://api.burgershop.io/product/api/v1/public/products"
+        return self._request("GET", url, params=params)
+
+    def bs_product(self, product_id: str) -> Dict[str, Any]:
+        pid = (product_id or "").strip()
+        if not pid:
+            raise RuntimeError("Missing BurgerShop seller product id")
+        url = f"https://api.burgershop.io/product/api/v1/public/products/{pid}"
+        return self._request("GET", url)
+
+    def extract_first_seller_product_asset(self, product_id: str) -> OrderAsset:
+        payload = self.bs_product(product_id)
+        data = payload.get("data", payload) if isinstance(payload, dict) else {}
+        if not isinstance(data, dict) or not data:
+            raise RuntimeError(f"Seller product not found: {product_id}")
+        designs = data.get("designs") or []
+        mockups = data.get("mockups") or []
+        variants = data.get("variants") or []
+        first_variant = variants[0] if variants and isinstance(variants[0], dict) else {}
+        design = designs[0] if designs and isinstance(designs[0], dict) else {}
+        mockup = (mockups[0] if mockups and isinstance(mockups[0], dict) else {}) or (first_variant.get("mockup") if isinstance(first_variant.get("mockup"), dict) else {}) or data.get("mockup") or {}
+        design_url = design.get("src") or ""
+        mockup_url = mockup.get("src") or data.get("mockup_url") or ""
+        if not (mockup_url or design_url):
+            raise RuntimeError(f"Seller product has no design/mockup URL: {product_id}")
+        return OrderAsset(
+            order_id=product_id,
+            product_name=data.get("title") or first_variant.get("short_code_name") or product_id,
+            color_name=first_variant.get("color_name") or "as shown in seller product mockup",
+            color_hex=first_variant.get("color_value") or "#ffffff",
+            design_url=design_url or mockup_url,
+            mockup_url=mockup_url or design_url,
+            product_id=product_id,
+        )
+
     def out_of_stock(self) -> Dict[str, Any]:
         return self._request("GET", "/product/outofstock")
 

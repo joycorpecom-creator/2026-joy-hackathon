@@ -16,6 +16,7 @@ from .plan_schema import (
     INTENT_LIST_ORDERS, INTENT_ORDER_INFO, INTENT_SYNC_LARK,
     INTENT_CONFIRM_PLAN, INTENT_EDIT_PLAN, INTENT_CANCEL,
     INTENT_GREETING, INTENT_HELP, INTENT_UNKNOWN,
+    INTENT_LIST_SELLER_PRODUCTS, INTENT_GET_SELLER_PRODUCT, INTENT_CREATE_FROM_SELLER_PRODUCT,
 )
 from .scene_expander import extract_order_ids, extract_count, expand_scenes
 from .registry import tool_inventory_for_prompt
@@ -78,6 +79,24 @@ def _has_list_order_intent(text: str) -> bool:
     return any(k in t for k in ["danh sách order", "toàn bộ order", "tất cả order", "order id", "order_id", "đơn hàng gần đây"])
 
 
+def extract_seller_product_ids(text: str) -> list:
+    # Seller product id: A28237-875, A60992-14. Excludes order id A60992-14-5706485.
+    ids = []
+    for m in re.finditer(r"\b(A\d{4,}-\d{1,6})(?!-)\b", text or "", re.I):
+        ids.append(m.group(1).upper())
+    return ids
+
+
+def _has_list_product_intent(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in ["tất cả product", "toàn bộ product", "danh sách product", "list product", "lấy product", "sản phẩm đã add", "product đã add"])
+
+
+def _has_product_info_intent(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in ["thông tin product", "chi tiết product", "xem product", "product info", "seller product"])
+
+
 def _has_refine_intent(text: str) -> bool:
     t = text.lower()
     return any(k in t for k in ["sửa ảnh", "đổi ảnh", "chỉnh ảnh", "refine", "làm lại ảnh", "giống ảnh", "ảnh 1", "ảnh 2", "ảnh 3", "ảnh 4", "ảnh 5"])
@@ -114,6 +133,21 @@ def deterministic_plan(message: str, context: Dict[str, Any]) -> AgentPlan:
     order_ids = extract_order_ids(text)
     current_order = (context.get("session") or {}).get("current_order_id") or context.get("current_order_id")
     order_id = order_ids[0] if order_ids else current_order
+    product_ids = extract_seller_product_ids(text)
+
+    # Seller product info / list
+    if _has_product_info_intent(text) and product_ids:
+        return AgentPlan(intent=INTENT_GET_SELLER_PRODUCT, confidence=0.93, order_id=product_ids[0], tool_plan=[ToolPlanStep(1, "bs_get_seller_product", {"product_id": product_ids[0]})], plan_id=plan_id, session_id=session_id, raw_message=text)
+    if _has_list_product_intent(text):
+        return AgentPlan(intent=INTENT_LIST_SELLER_PRODUCTS, confidence=0.91, tool_plan=[ToolPlanStep(1, "bs_list_seller_products", {})], plan_id=plan_id, session_id=session_id, raw_message=text)
+
+    # Mockup from seller product
+    if product_ids and _has_mockup_intent(text) and not order_id:
+        count = extract_count(text) or 1
+        scenes = expand_scenes(text, count=count)
+        requires_confirmation = (count >= 4 or any(s.source != "explicit" for s in scenes)) and not _wants_execute_now(text)
+        tool_plan = [ToolPlanStep(1, "create_mockup_from_seller_product", {"product_id": product_ids[0], "scenes": [s.to_dict() for s in scenes]})]
+        return AgentPlan(intent=INTENT_CREATE_FROM_SELLER_PRODUCT, confidence=0.93, batch_count=count, scenes=scenes, order_id=product_ids[0], tool_plan=tool_plan, plan_id=plan_id, session_id=session_id, raw_message=text, requires_confirmation=requires_confirmation, reason="seller product mockup" if not requires_confirmation else "batch lớn hoặc có scene suy luận")
 
     if _has_order_info_intent(text) and order_id:
         return AgentPlan(intent=INTENT_ORDER_INFO, confidence=0.92, order_id=order_id, tool_plan=[ToolPlanStep(1, "get_order_info", {"order_id": order_id})], plan_id=plan_id, session_id=session_id, raw_message=text)

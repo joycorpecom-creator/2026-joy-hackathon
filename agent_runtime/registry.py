@@ -74,6 +74,30 @@ TOOL_REGISTRY: List[Dict[str, Any]] = [
         "category": "product"
     },
     {
+        "name": "bs_list_seller_products",
+        "description": "Liệt kê tất cả seller products BurgerShop/BurgerPrints đã add file in, có product_id dạng Axxxxx-xxx và mockup_url.",
+        "input_schema": {"type": "object", "properties": {"page": {"type": "integer"}, "page_size": {"type": "integer"}}, "required": []},
+        "safe": True,
+        "side_effect": False,
+        "category": "seller_product"
+    },
+    {
+        "name": "bs_get_seller_product",
+        "description": "Lấy chi tiết seller product đã add file in theo product_id dạng Axxxxx-xxx, gồm designs[], mockups[], variants[], printable area.",
+        "input_schema": {"type": "object", "properties": {"product_id": {"type": "string"}}, "required": ["product_id"]},
+        "safe": True,
+        "side_effect": False,
+        "category": "seller_product"
+    },
+    {
+        "name": "create_mockup_from_seller_product",
+        "description": "Tạo nhiều mockup lifestyle từ seller product đã add design/mockup. Nhận product_id + scenes, không cần order_id.",
+        "input_schema": {"type": "object", "properties": {"product_id": {"type": "string"}, "scenes": {"type": "array"}}, "required": ["product_id", "scenes"]},
+        "safe": False,
+        "side_effect": True,
+        "category": "mockup"
+    },
+    {
         "name": "create_mockup_batch",
         "description": "Tạo nhiều mockup lifestyle từ đơn hàng có sẵn. Tool nhận order_id + danh sách scenes đã expand đầy đủ. Mỗi scene sẽ tạo 1 ảnh mockup riêng biệt. Trả về danh sách ảnh kèm metadata.",
         "input_schema": {

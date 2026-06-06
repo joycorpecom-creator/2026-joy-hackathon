@@ -294,6 +294,20 @@ class BurgerMockupAgent:
         result = generate_mockup(asset, scene)
         elapsed = round(time.time() - t0, 2)
 
+        return self._finalize_generated_mockup(result, asset, scene, elapsed)
+
+    def _create_seller_product_mockup_once(self, product_id: str, scene: str) -> Dict[str, Any]:
+        """Generate one mockup from BurgerShop seller product with attached design/mockup."""
+        t0 = time.time()
+        asset = self.bp.extract_first_seller_product_asset(product_id)
+        result = generate_mockup(asset, scene)
+        elapsed = round(time.time() - t0, 2)
+        out = self._finalize_generated_mockup(result, asset, scene, elapsed)
+        out["product_id"] = product_id
+        return out
+
+    def _finalize_generated_mockup(self, result: Dict[str, Any], asset, scene: str, elapsed: float) -> Dict[str, Any]:
+
         from imgbb_uploader import upload_image
         from sync_webhook import build_mockup_payload, post_mockup_created
         local_path = result.get("path", "")
@@ -329,7 +343,7 @@ class BurgerMockupAgent:
             sync_info["sync_error"] = str(sync_result["error"])
 
         return {
-            "order_id": oid,
+            "order_id": asset.order_id,
             "mockup_url": f"/outputs/{result['path'].split('/')[-1]}",
             "provider": result["provider"],
             "size": f"{result['width']}×{result['height']}",
@@ -520,6 +534,71 @@ class BurgerMockupAgent:
                         "image_markdown": f"![{o.get('id') or 'order'}]({mockup_url or design_url})" if (mockup_url or design_url) else "",
                     })
                 return {"orders": orders, "count": len(orders), "note": "Include image_markdown for each order that has an image."}
+
+            if name == "bs_list_seller_products":
+                r = self.bp.bs_products(page=args.get("page", 1), page_size=args.get("page_size", 10))
+                data = r.get("data", r) if isinstance(r, dict) else {}
+                result = data.get("result", []) if isinstance(data, dict) else []
+                items = []
+                for p in result[:12]:
+                    if isinstance(p, dict):
+                        items.append({
+                            "id": p.get("id"), "title": p.get("title"), "state": p.get("state"),
+                            "mockup_url": p.get("mockup_url") or "", "uri": p.get("uri"),
+                            "product_type": p.get("product_type"), "vendor": p.get("vendor"),
+                        })
+                return {"products": items, "count": len(items), "total": data.get("total", 0) if isinstance(data, dict) else len(items)}
+
+            if name == "bs_get_seller_product":
+                pid = args.get("product_id") or args.get("seller_product_id") or ""
+                try:
+                    r = self.bp.bs_product(pid)
+                except Exception as e:
+                    return {"error": str(e)}
+                data = r.get("data", r) if isinstance(r, dict) else {}
+                if not isinstance(data, dict) or not data:
+                    return {"error": f"Không tìm thấy seller product {pid}"}
+                designs = data.get("designs") or []
+                mockups = data.get("mockups") or []
+                variants = data.get("variants") or []
+                first_v = variants[0] if variants and isinstance(variants[0], dict) else {}
+                design_src = designs[0].get("src") if designs and isinstance(designs[0], dict) else ""
+                vm = first_v.get("mockup") if isinstance(first_v.get("mockup"), dict) else {}
+                dm = data.get("mockup") if isinstance(data.get("mockup"), dict) else {}
+                mockup_src = (mockups[0].get("src") if mockups and isinstance(mockups[0], dict) else "") or vm.get("src") or dm.get("src") or data.get("mockup_url") or ""
+                product_types = data.get("product_types") or []
+                return {
+                    "product_id": data.get("id", pid), "title": data.get("title", ""),
+                    "price": data.get("price"), "compare_price": data.get("compare_price"),
+                    "vendor": data.get("vendor"),
+                    "product_type": data.get("product_type") or (product_types[0].get("name", "") if product_types and isinstance(product_types[0], dict) else ""),
+                    "short_codes": [pt.get("short_code", "") for pt in product_types if isinstance(pt, dict)],
+                    "mockup_src": mockup_src, "design_src": design_src,
+                    "designs": [{
+                        "src": d.get("src"), "type": d.get("type"), "short_code": d.get("short_code"),
+                        "printable_width": d.get("printable_width"), "printable_height": d.get("printable_height"),
+                        "printable_left": d.get("printable_left"), "printable_top": d.get("printable_top"),
+                        "position": d.get("position"),
+                    } for d in designs if isinstance(d, dict)],
+                    "mockups": [{"src": m.get("src"), "id": m.get("id"), "position": m.get("position")} for m in mockups if isinstance(m, dict)],
+                    "variants": [{
+                        "id": v.get("id"), "sku": v.get("sku"), "short_code": v.get("short_code"),
+                        "short_code_name": v.get("short_code_name"), "color_name": v.get("color_name"),
+                        "color_value": v.get("color_value"), "size_name": v.get("size_name"),
+                        "price": v.get("price"), "compare_price": v.get("compare_price"), "cost": v.get("cost"),
+                        "mockup_src": (v.get("mockup") or {}).get("src") if isinstance(v.get("mockup"), dict) else "",
+                    } for v in variants[:20] if isinstance(v, dict)],
+                    "store_channels": data.get("store_channels") or [],
+                    "image_markdown": f"![{pid}]({mockup_src or design_src})" if (mockup_src or design_src) else "",
+                }
+
+            if name == "create_mockup_from_seller_product":
+                pid = args.get("product_id") or args.get("seller_product_id") or ""
+                scene = args.get("scene", "")
+                results = [self._create_seller_product_mockup_once(pid, scn) for scn in self._split_scenes(scene)]
+                if len(results) == 1:
+                    return results[0]
+                return {"type": "mockup_batch", "product_id": pid, "count": len(results), "mockups": results, "product": results[0].get("product", "") if results else "", "color": results[0].get("color", "") if results else ""}
 
             if name == "bp_tracking":
                 oid = args.get("order_id", "")

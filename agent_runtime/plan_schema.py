@@ -12,6 +12,9 @@ INTENT_REFINE = "refine_mockup"
 INTENT_LIST_ORDERS = "list_orders"
 INTENT_ORDER_INFO = "get_order_info"
 INTENT_SYNC_LARK = "sync_lark"
+INTENT_LIST_SELLER_PRODUCTS = "list_seller_products"
+INTENT_GET_SELLER_PRODUCT = "get_seller_product"
+INTENT_CREATE_FROM_SELLER_PRODUCT = "create_mockup_from_seller_product"
 INTENT_CONFIRM_PLAN = "confirm_plan"
 INTENT_EDIT_PLAN = "edit_plan"
 INTENT_CANCEL = "cancel"
@@ -22,6 +25,7 @@ INTENT_UNKNOWN = "unknown"
 ALL_INTENTS = [
     INTENT_CREATE_BATCH, INTENT_CREATE_SINGLE, INTENT_REFINE,
     INTENT_LIST_ORDERS, INTENT_ORDER_INFO, INTENT_SYNC_LARK,
+    INTENT_LIST_SELLER_PRODUCTS, INTENT_GET_SELLER_PRODUCT, INTENT_CREATE_FROM_SELLER_PRODUCT,
     INTENT_CONFIRM_PLAN, INTENT_EDIT_PLAN, INTENT_CANCEL,
     INTENT_GREETING, INTENT_HELP, INTENT_UNKNOWN,
 ]
@@ -124,7 +128,7 @@ def needs_confirmation(plan: AgentPlan) -> bool:
     # Batch >= 4 → yes
     # Inferred scenes > 0 → yes
     # All explicit AND batch < 4 → no (execute directly)
-    if plan.intent not in (INTENT_CREATE_BATCH, INTENT_CREATE_SINGLE):
+    if plan.intent not in (INTENT_CREATE_BATCH, INTENT_CREATE_SINGLE, INTENT_CREATE_FROM_SELLER_PRODUCT):
         return False
     if (plan.batch_count or 1) >= AUTO_CONFIRM_BATCH_LIMIT:
         return True
@@ -137,7 +141,8 @@ def plan_display_text(plan: AgentPlan) -> str:
     """Human-readable plan text for preview (Telegram/Web)."""
     lines = [f"Dạ anh, em đã hiểu. Đây là plan dự kiến:"]
     if plan.order_id:
-        lines.append(f"- Order: {plan.order_id}")
+        label = "Product" if plan.intent == INTENT_CREATE_FROM_SELLER_PRODUCT else "Order"
+        lines.append(f"- {label}: {plan.order_id}")
     count = plan.batch_count or len(plan.scenes)
     lines.append(f"- Số ảnh: {count}")
     if plan.scenes:

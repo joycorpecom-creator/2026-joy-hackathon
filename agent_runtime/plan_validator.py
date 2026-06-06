@@ -24,7 +24,7 @@ def validate_plan(plan: AgentPlan) -> Tuple[bool, List[str]]:
                 for arg in required:
                     if arg not in step.args or step.args[arg] in (None, "", []):
                         errors.append(f"tool {step.tool} missing arg {arg}")
-    if plan.intent in ("create_mockup_batch", "create_mockup_single"):
+    if plan.intent in ("create_mockup_batch", "create_mockup_single", "create_mockup_from_seller_product"):
         if plan.batch_count and plan.scenes:
             if len(plan.scenes) != plan.batch_count:
                 errors.append(f"scene count mismatch: batch={plan.batch_count} scenes={len(plan.scenes)}")
