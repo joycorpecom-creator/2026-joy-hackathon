@@ -9,7 +9,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config_store import load_settings, save_settings
@@ -25,6 +25,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 ROOT = Path(__file__).parent
 STATIC = ROOT / "static"
 STATIC.mkdir(exist_ok=True)
+
+app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 # ── API ENDPOINTS ──
 
@@ -233,6 +235,14 @@ async def agent_logs_page():
 async def index():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     return HTMLResponse(html)
+
+
+@app.get("/logo.png")
+async def logo_png():
+    p = STATIC / "logo.png"
+    if p.exists():
+        return FileResponse(str(p), media_type="image/png")
+    raise HTTPException(404)
 
 
 @app.on_event("startup")

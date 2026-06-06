@@ -15,6 +15,55 @@ from product_layout import pick_base_image, infer_print_bbox
 from design_compositor import composite_design_on_product
 from integrity import compare_design_to_layer
 
+
+def build_reasoned_image_prompt(
+    user_scene: str,
+    product_name: str = "",
+    product_type: str = "",
+    color: str = "",
+    count: int = 1,
+    scene_index: int = 0,
+) -> Tuple[str, Dict]:
+    """Gemini reasoning brief → deterministic final image prompt.
+
+    Phase 1 optimization: before calling image model, use Gemini text model to
+    reason about target audience, model, scene, camera, and preservation rules.
+    Falls back to deterministic brief if reasoning fails.
+    """
+    try:
+        from agent_runtime.image_brief_planner import plan_image_brief, build_fallback_image_brief
+        from agent_runtime.image_prompt_compiler import compile_image_prompt
+
+        brief = plan_image_brief(
+            user_scene=user_scene,
+            product_name=product_name,
+            product_type=product_type,
+            color=color,
+            count=count,
+        )
+        source = "gemini_reasoning"
+        if not brief:
+            brief = build_fallback_image_brief(
+                user_scene=user_scene,
+                product_name=product_name,
+                product_type=product_type,
+                color=color,
+                count=count,
+            )
+            source = "deterministic_fallback"
+        final_prompt = compile_image_prompt(
+            brief=brief,
+            scene_index=scene_index,
+            product_name=product_name,
+            product_type=product_type,
+            color=color,
+            user_scene=user_scene,
+        )
+        return final_prompt, {"source": source, "brief": brief}
+    except Exception as e:
+        print(f"Reasoned prompt build error: {e}", flush=True)
+        return "", {"source": "legacy_fallback", "error": str(e)}
+
 ROOT = Path(__file__).parent
 OUTPUT_DIR = ROOT / "outputs"
 ASSET_DIR = ROOT / "assets"
@@ -134,7 +183,15 @@ def generate_product_mockup(product_id: str, product_name: str, color_name: str,
     if not base_mockup_url:
         raise RuntimeError(f"Product has no base mockup URL: {product_id}")
     product_path = download_image(base_mockup_url)
-    full_prompt = build_product_mockup_prompt(product_name=product_name, color=color_name, scene=prompt)
+    full_prompt, prompt_meta = build_reasoned_image_prompt(
+        user_scene=prompt,
+        product_name=product_name,
+        product_type=product_name,
+        color=color_name,
+    )
+    if not full_prompt:
+        full_prompt = build_product_mockup_prompt(product_name=product_name, color=color_name, scene=prompt)
+        prompt_meta = {"source": "legacy_fallback"}
 
     final = try_generate_lifestyle_mockup(product_path, full_prompt)
     provider = "gemini-image-input"
@@ -163,6 +220,7 @@ def generate_product_mockup(product_id: str, product_name: str, color_name: str,
         "seconds": round(time.time() - started, 2),
         "cost_usd": 0.0 if provider == "deterministic-placeholder" else round(0.08 * (final.width * final.height) / (1600 * 1600), 2),
         "provider": provider,
+        "prompt_meta": prompt_meta,
     }
 
 
@@ -182,11 +240,32 @@ def generate_mockup(asset: OrderAsset, prompt: str) -> dict:
     source_path = download_image(source_url)
     source_label = "bp_order_mockup" if asset.mockup_url else "bp_order_design"
 
-    full_prompt = build_product_mockup_prompt(
+    # Build prompt with reasoning (Phase 1)
+    full_prompt, prompt_meta = build_reasoned_image_prompt(
+        user_scene=prompt,
         product_name=asset.product_name,
+        product_type=getattr(asset, "product_type", "") or "",
         color=asset.color_name or "as shown in the attached BP order mockup",
-        scene=prompt,
-    ) + (
+    )
+    if not full_prompt:
+        try:
+            from agent_runtime.prompt_library import build_mockup_prompt
+            info = build_mockup_prompt(
+                product_name=asset.product_name,
+                product_type=getattr(asset, "product_type", "") or "",
+                color=asset.color_name or "as shown in the attached BP order mockup",
+                user_scene=prompt,
+                design_url=asset.design_url or asset.mockup_url or "",
+            )
+            full_prompt = info["prompt"]
+        except Exception:
+            full_prompt = build_product_mockup_prompt(
+                product_name=asset.product_name,
+                color=asset.color_name or "as shown in the attached BP order mockup",
+                scene=prompt,
+            )
+        prompt_meta = {"source": "legacy_fallback"}
+    full_prompt += (
         "\n\nORDER-SOURCE RULES:\n"
         "- The attached image is the FINAL BurgerPrints-rendered order mockup, not a blank product.\n"
         "- Treat it as the exact source of truth for product, print, color, variant, placement, and proportions.\n"
@@ -201,7 +280,7 @@ def generate_mockup(asset: OrderAsset, prompt: str) -> dict:
     if final is None:
         # Safe fallback: composite the exact BP-rendered mockup into a generated scene.
         # This is less natural but preserves the order product pixels.
-        scene = try_generate_ai_scene(build_scene_prompt(prompt, asset.product_name, asset.color_name), asset.color_hex)
+        scene = try_generate_ai_scene(build_scene_prompt(prompt, asset.product_name, asset.color_name, getattr(asset, "product_type", "") or ""), asset.color_hex)
         provider = "gemini-order-composite-fallback" if scene else "deterministic-order-composite"
         if scene is None:
             scene = make_scene(prompt, asset.color_hex)
@@ -232,4 +311,5 @@ def generate_mockup(asset: OrderAsset, prompt: str) -> dict:
         "provider": provider,
         "source_asset": source_label,
         "source_url": source_url,
+        "prompt_meta": prompt_meta,
     }

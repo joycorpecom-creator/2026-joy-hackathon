@@ -14,6 +14,8 @@ class OrderAsset:
     design_url: str
     mockup_url: Optional[str]
     product_id: Optional[str]
+    product_type: str = ""
+    product_types: Optional[List[str]] = None
 
 
 DEMO_DESIGN_URL = "https://d1ud88wu9m1k4s.cloudfront.net/fulfill/design/2024/06/03/d94aeb361c70821e0331500fc3cc0353.png"
@@ -127,6 +129,16 @@ class BurgerPrintsClient:
         designs = data.get("designs") or []
         mockups = data.get("mockups") or []
         variants = data.get("variants") or []
+        product_types_raw = data.get("product_types") or []
+        product_type_names = []
+        for pt in product_types_raw:
+            if isinstance(pt, dict):
+                name = pt.get("name") or pt.get("title") or pt.get("type") or ""
+                if name:
+                    product_type_names.append(str(name))
+            elif pt:
+                product_type_names.append(str(pt))
+        product_type = data.get("product_type") or (product_type_names[0] if product_type_names else "")
         first_variant = variants[0] if variants and isinstance(variants[0], dict) else {}
         design = designs[0] if designs and isinstance(designs[0], dict) else {}
         mockup = mockups[0] if mockups and isinstance(mockups[0], dict) else {}
@@ -143,6 +155,8 @@ class BurgerPrintsClient:
             design_url=design_url or mockup_url,
             mockup_url=mockup_url or design_url,
             product_id=product_id,
+            product_type=product_type,
+            product_types=product_type_names,
         )
 
     # ── Webhook ──

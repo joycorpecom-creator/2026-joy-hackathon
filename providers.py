@@ -84,8 +84,24 @@ def build_scene_prompt(
     user_prompt: str,
     product_name: str,
     color_name: str,
+    product_type: str = "",
 ) -> str:
-    """Build full scene prompt from template + product context."""
+    """Build full scene prompt from category resolver + prompt library.
+
+    Fallback-safe: if prompt_library fails, use older markdown templates.
+    """
+    try:
+        from agent_runtime.prompt_library import build_mockup_prompt
+        info = build_mockup_prompt(
+            product_name=product_name,
+            product_type=product_type,
+            color=color_name,
+            user_scene=user_prompt,
+        )
+        return info["prompt"]
+    except Exception:
+        pass
+
     category = _detect_product_category(product_name)
     template_raw = _load_template(category)
 
