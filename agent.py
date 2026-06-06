@@ -430,15 +430,59 @@ class BurgerMockupAgent:
                     or item.get("design_url")
                     or ""
                 )
+                short_code = item.get("short_code") or item.get("catalog_sku") or ""
+                product_meta = {}
+                if short_code:
+                    try:
+                        pr = self.bp.product(short_code)
+                        pd = pr.get("data", pr) if isinstance(pr, dict) else {}
+                        if isinstance(pd, dict):
+                            product_meta = {
+                                "catalog_name": pd.get("display_name") or pd.get("name"),
+                                "print_area": pd.get("print_area"),
+                                "resolution": pd.get("resolution") or pd.get("resolution_default"),
+                                "base_mockup_url": pd.get("url"),
+                                "variations": pd.get("variations", [])[:20],
+                            }
+                    except Exception:
+                        product_meta = {}
+                line_items = []
+                for it in items:
+                    line_items.append({
+                        "item_id": it.get("id"),
+                        "product_id": it.get("product_id"),
+                        "name": it.get("name") or it.get("product_name") or it.get("catalog_sku") or "",
+                        "short_code": it.get("short_code") or it.get("catalog_sku") or "",
+                        "sku": it.get("sku"),
+                        "color": it.get("color_name"),
+                        "color_hex": it.get("color_value"),
+                        "size": it.get("size_name"),
+                        "quantity": it.get("quantity"),
+                        "price": it.get("price"),
+                        "base_cost": it.get("base_cost"),
+                        "amount": it.get("amount"),
+                        "shipping_fee": it.get("shipping_fee"),
+                        "currency": it.get("currency") or r.get("currency"),
+                        "designs": it.get("designs") or [],
+                        "mockups": it.get("mockups") or [],
+                    })
                 return {
                     "order_id": r.get("id", oid),
                     "state": state,
-                    "amount": r.get("amount") or r.get("total", "?"),
+                    "fulfillment": r.get("fulfillment"),
+                    "currency": r.get("currency"),
+                    "amount": (r.get("seller") or {}).get("amount") or r.get("amount") or r.get("total", "?"),
+                    "shipping_fee": (r.get("seller") or {}).get("shipping_fee") or r.get("shipping_fee"),
+                    "tax_amount": (r.get("seller") or {}).get("tax_amount") or r.get("tax_amount"),
+                    "shipping_method": r.get("shipping_method"),
+                    "shipping": r.get("shipping"),
                     "items": item_names,
+                    "line_items": line_items,
                     "mockup_url": mockup_url,
                     "design_url": design_url,
                     "product": item.get("name") or item.get("product_name") or item.get("catalog_sku") or "",
-                    "short_code": item.get("short_code") or item.get("catalog_sku") or "",
+                    "short_code": short_code,
+                    "product_meta": product_meta,
                     "image_markdown": f"![{oid}]({mockup_url or design_url})" if (mockup_url or design_url) else "",
                 }
 

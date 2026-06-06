@@ -255,7 +255,11 @@ class Executor:
                 first = raw_items[0] if raw_items and isinstance(raw_items[0], dict) else {}
                 product = first.get("name") or first.get("product_name") or first.get("catalog_sku") or ""
             status = item.get("state") or item.get("status") or item.get("fulfillment_status") or "?"
-            lines.append(f"- {oid}: {product} ({status})")
+            mu = item.get("mockup_url") or ""
+            line = f"- {oid}: {product} ({status})"
+            if mu:
+                line += f" | ảnh: {mu}"
+            lines.append(line)
         return "\n".join(lines)
 
     def _format_order(self, data: Any) -> str:
@@ -265,10 +269,59 @@ class Executor:
         product = data.get("product") or ""
         state = data.get("state") or data.get("status", "?")
         amount = data.get("amount") or "?"
-        lines = [f"Dạ order {oid}:", f"- Sản phẩm: {product}", f"- Trạng thái: {state}", f"- Giá: {amount}"]
+        currency = data.get("currency") or ""
+        short_code = data.get("short_code") or ""
+        fulfill = data.get("fulfillment") or ""
+        shipping = data.get("shipping_fee") or ""
+        ship = data.get("shipping") or {}
+        recipient = (ship.get("name") or "") if isinstance(ship, dict) else ""
+
+        lines = [f"Dạ anh, đây là thông tin order {oid}:",
+                 f"- Sản phẩm: {product}",
+                 f"- Mã catalog: {short_code}" if short_code else "",
+                 f"- Trạng thái: {state}",
+                 f"- Fulfillment: {fulfill}" if fulfill else "",
+                 f"- Tổng tiền: {amount} {currency}",
+                 f"- Phí ship: {shipping} {currency}" if shipping else "",
+                 f"- Người nhận: {recipient}" if recipient else ""]
+
+        # Product meta: print area, resolution
+        pm = data.get("product_meta") or {}
+        if pm:
+            pa = pm.get("print_area")
+            res = pm.get("resolution")
+            if pa:
+                lines.append(f"- Vị trí in: {', '.join(pa) if isinstance(pa, list) else str(pa)}")
+            if res:
+                lines.append(f"- Độ phân giải: {res}")
+
+        # Line items
+        lis = data.get("line_items") or []
+        for li in lis[:5]:
+            if not isinstance(li, dict):
+                continue
+            li_name = li.get("name") or li.get("sku") or ""
+            li_color = li.get("color") or ""
+            li_size = li.get("size") or ""
+            li_qty = li.get("quantity", "")
+            li_price = li.get("price") or ""
+            li_sku = li.get("sku") or ""
+            parts = []
+            if li_color:
+                parts.append(li_color)
+            if li_size:
+                parts.append(li_size)
+            detail = f"x{li_qty}" if li_qty else ""
+            cost = f"(${li_price})" if li_price else ""
+            extra = f" | {li_sku}" if li_sku else ""
+            lines.append(f"- Item: {li_name} {', '.join(parts)} {detail} {cost}{extra}".strip())
+
         if data.get("mockup_url"):
             lines.append(f"- Ảnh mockup: {data['mockup_url']}")
-        return "\n".join(lines)
+        if data.get("design_url") and data.get("design_url") != data.get("mockup_url"):
+            lines.append(f"- Ảnh design: {data['design_url']}")
+
+        return "\n".join(filter(None, lines))
 
     def _extract_order_images(self, data: Any) -> list:
         if not data or not isinstance(data, dict):

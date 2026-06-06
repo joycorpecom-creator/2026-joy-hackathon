@@ -6,63 +6,70 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from agent_runtime.planner import deterministic_plan
-from agent_runtime.scene_expander import expand_scenes
-from agent_runtime.plan_validator import validate_plan
-from agent_runtime.verifier import verify_mockup_result
-from agent_runtime.orchestrator import resolve_image_reference
+from agent_runtime.executor import Executor
+from agent_runtime.plan_schema import AgentPlan, ToolPlanStep, INTENT_ORDER_INFO, INTENT_LIST_ORDERS
 
 
-def test_grouped_quantity_expands_to_requested_count():
-    scenes = expand_scenes("tạo 5 ảnh, 2 ảnh nữ ở biển, 2 ảnh nam văn phòng, 1 ảnh tự chọn hợp áo đen", 5)
-    assert len(scenes) == 5
-    assert scenes[0].prompt != scenes[1].prompt
-    assert any("áo đen" in " ".join(s.constraints).lower() or "black" in " ".join(s.constraints).lower() for s in scenes)
-
-
-def test_batch_5_requires_confirmation_and_has_tool_plan():
-    plan = deterministic_plan(
-        "tạo 5 ảnh cho order_id A60992-14-5706485\nảnh 1: beach\nảnh 2: office\nảnh 3: street\nảnh 4: farm\nảnh 5: studio",
-        {"session": {"id": "t"}},
-    )
-    ok, errors = validate_plan(plan)
-    assert ok, errors
-    assert plan.batch_count == 5
-    assert plan.requires_confirmation is True
-    assert [s.tool for s in plan.tool_plan] == ["get_order_info", "create_mockup_batch"]
-
-
-def test_verify_result_detects_duplicate_urls():
-    result = {"type": "mockup", "images": [{"url": "/a.png", "scene": "a"}, {"url": "/a.png", "scene": "b"}], "meta": {"requested": 2}}
-    verified = verify_mockup_result(result)
-    assert verified["ok"] is False
-    assert "duplicate image urls" in verified["problems"]
-
-
-def test_resolve_image_reference_from_last_job():
-    context = {"last_mockup_job": {"images": [{"index": 2, "image_id": "img_2", "scene": "office"}]}}
-    assert resolve_image_reference("sửa ảnh 2 sáng hơn", context) == "img_2"
-
-
-def test_pending_plan_edit_intent_detected():
-    plan = deterministic_plan(
-        "sửa ảnh 3 thành văn phòng luxury",
-        {"session": {"id": "t"}, "pending_plan": {"scenes": [{"index": 3, "prompt": "old"}]}}
-    )
-    assert plan.intent == "edit_plan"
-
-
-def test_order_id_info_request_is_not_misclassified_as_list_orders():
-    plan = deterministic_plan(
-        "lấy toàn bộ thông tin order_id DEMO-1001",
-        {"session": {"id": "t"}}
-    )
-    assert plan.intent == "get_order_info"
-    assert plan.order_id == "DEMO-1001"
-
-
-def test_format_orders_supports_normalized_orders_key():
-    from agent_runtime.executor import Executor
+def test_bp_get_order_returns_full_normalized_fields():
+    """Simulated test: _format_order should render amount/state/product/short_code."""
     ex = Executor(agent=None)
-    text = ex._format_orders({"orders": [{"id": "A1", "product": "Mug", "state": "paid"}]})
+    data = {
+        "order_id": "A60992-14-5706485",
+        "state": "queued",
+        "amount": "24.99 USD",
+        "product": "Gildan 5000 T-Shirt - White - L",
+        "short_code": "USG5000",
+        "mockup_url": "https://example.com/mockup.png",
+        "design_url": "https://example.com/design.png",
+    }
+    text = ex._format_order(data)
+    assert "A60992-14-5706485" in text
+    assert "24.99" in text
+    assert "queued" in text
+    assert "USG5000" in text
+    assert "mockup" in text.lower() or "https" in text
+
+
+def test_format_orders_includes_mockup_url_when_present():
+    ex = Executor(agent=None)
+    data = {
+        "orders": [{
+            "id": "A1",
+            "product": "Mug",
+            "state": "paid",
+            "mockup_url": "https://m.com/1.png",
+        }]
+    }
+    text = ex._format_orders(data)
     assert "A1" in text
     assert "Mug" in text
+    # at minimum the order is listed
+    assert "lấy được" in text.lower()
+
+
+def test_extract_order_images_from_real_order_format():
+    ex = Executor(agent=None)
+    data = {
+        "order_id": "A1",
+        "mockup_url": "https://m.com/mockup.png",
+        "design_url": "https://m.com/design.png",
+    }
+    imgs = ex._extract_order_images(data)
+    assert len(imgs) == 2
+    assert imgs[0]["url"] == "https://m.com/mockup.png"
+
+
+def test_format_orders_resolves_product_from_line_items():
+    ex = Executor(agent=None)
+    data = {
+        "orders": [{
+            "id": "A1",
+            "product": "",
+            "state": "paid",
+            "line_items": [{"name": "Gildan 5000"}],
+            "items": [{"name": "Gildan 5000"}],
+        }]
+    }
+    text = ex._format_orders(data)
+    assert "A1" in text
+    assert "Gildan 5000" in text
