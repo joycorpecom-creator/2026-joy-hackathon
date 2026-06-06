@@ -18,7 +18,9 @@ DEFAULTS = {
     "llm_provider": "google",
     "llm_model": "gemini-3-flash-preview",
     "llm_api_key": "",
+    "image_model": "gemini-3.1-flash-image",
     "replicate_api_key": "",
+    "imgbb_api_key": "5c9d36c4d8f45696febcd30403b28028",
     "sync_enabled": "false",
     "sync_provider": "n8n",
     "sync_webhook_url": "",
@@ -66,14 +68,20 @@ def load_settings() -> Dict[str, str]:
             "llm_provider": env.get("LLM_PROVIDER") or data["llm_provider"],
             "llm_model": env.get("LLM_MODEL") or data["llm_model"],
             "llm_api_key": _env_val(env, "GEMINI_API_KEY", _env_val(env, "GOOGLE_API_KEY", data["llm_api_key"])),
+            "image_model": env.get("IMAGE_MODEL") or env.get("LLM_IMAGE_MODEL") or data["image_model"],
             "replicate_api_key": _env_val(env, "REPLICATE_API_KEY", _env_val(env, "REPLICATE_API_TOKEN", data["replicate_api_key"])),
+            "imgbb_api_key": _env_val(env, "IMGBB_API_KEY", data["imgbb_api_key"]),
         })
+        for k in ("SYNC_ENABLED", "SYNC_PROVIDER", "SYNC_WEBHOOK_URL", "SYNC_SECRET", "SYNC_SEND_IMAGE_URL", "SYNC_TIMEOUT_SECONDS"):
+            data[k.lower()] = env.get(k) or data.get(k.lower(), "")
+        for k in ("LARK_APP_ID", "LARK_APP_SECRET", "LARK_BASE_TOKEN", "LARK_TABLE_ID"):
+            data[k.lower()] = env.get(k) or data.get(k.lower(), "")
     return data
 
 
 def save_settings(settings: Dict[str, str]) -> Dict[str, str]:
     data = load_settings()
-    secret_keys = {"burgerprints_api_key", "telegram_bot_token", "llm_api_key", "replicate_api_key", "sync_secret"}
+    secret_keys = {"burgerprints_api_key", "telegram_bot_token", "llm_api_key", "replicate_api_key", "imgbb_api_key", "sync_secret"}
     for k in DEFAULTS:
         if k in settings:
             v = (settings[k] or "").strip()
@@ -91,7 +99,9 @@ def save_settings(settings: Dict[str, str]) -> Dict[str, str]:
             f"LLM_PROVIDER={data['llm_provider']}",
             f"LLM_MODEL={data['llm_model']}",
             "GEMINI_API_KEY=" + data["llm_api_key"],
+            "IMAGE_MODEL=" + data.get("image_model", "gemini-3.1-flash-image"),
             "REPLICATE_API_KEY=" + data["replicate_api_key"],
+            "IMGBB_API_KEY=" + data.get("imgbb_api_key", ""),
             f"SYNC_ENABLED={data['sync_enabled']}",
             f"SYNC_PROVIDER={data['sync_provider']}",
             f"SYNC_WEBHOOK_URL={data['sync_webhook_url']}",
@@ -107,6 +117,7 @@ def save_settings(settings: Dict[str, str]) -> Dict[str, str]:
     os.environ["TELEGRAM_ALLOWED_CHAT_ID"] = data["telegram_allowed_chat_id"]
     os.environ["PUBLIC_BASE_URL"] = data["public_base_url"]
     os.environ["REPLICATE_API_KEY"] = data["replicate_api_key"]
+    os.environ["IMGBB_API_KEY"] = data.get("imgbb_api_key", "")
     os.environ["SYNC_ENABLED"] = data["sync_enabled"]
     os.environ["SYNC_WEBHOOK_URL"] = data["sync_webhook_url"]
     os.environ["SYNC_SECRET"] = data["sync_secret"]

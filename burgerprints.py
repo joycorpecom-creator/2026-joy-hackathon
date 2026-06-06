@@ -78,6 +78,47 @@ class BurgerPrintsClient:
         url = f"https://api.burgershop.io/product/api/v1/public/products/{pid}"
         return self._request("GET", url)
 
+    def bs_update_product(self, product_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        pid = (product_id or "").strip()
+        if not pid:
+            raise RuntimeError("Missing BurgerShop seller product id")
+        url = f"https://api.burgershop.io/product/api/v1/public/products/{pid}"
+        return self._request("PUT", url, json=payload)
+
+    def bs_append_mockup_to_product(self, product_id: str, image_url: str, image_id: str = "") -> Dict[str, Any]:
+        """Safely append a generated mockup URL to product.mockups via GET→merge→PUT.
+
+        BurgerShop v1 update product requires a broad product body; never send a tiny partial body.
+        """
+        pid = (product_id or "").strip()
+        url = (image_url or "").strip()
+        if not pid:
+            raise RuntimeError("Missing product_id")
+        if not url.startswith(("http://", "https://")):
+            raise RuntimeError("image_url must be public http/https URL")
+        detail = self.bs_product(pid)
+        data = detail.get("data", detail) if isinstance(detail, dict) else {}
+        if not isinstance(data, dict) or not data:
+            raise RuntimeError(f"Product not found: {pid}")
+        payload = dict(data)
+        mockups = [dict(m) for m in (payload.get("mockups") or []) if isinstance(m, dict)]
+        base = dict(mockups[0]) if mockups else {
+            "media_type": "image", "host": "", "source": "generate", "thumbnail_url": None, "video_id": ""
+        }
+        next_pos = max([int(m.get("position") or 0) for m in mockups] + [-1]) + 1
+        mockup_id = image_id or f"joy{int(__import__('time').time())}"
+        new_mockup = dict(base)
+        new_mockup.update({"id": mockup_id, "position": next_pos, "src": url, "source": "joy_agent"})
+        mockups.append(new_mockup)
+        payload["mockups"] = mockups
+        # The docs body includes collections; keep list shape if absent.
+        payload.setdefault("collections", data.get("collections") or [])
+        result = self.bs_update_product(pid, payload)
+        # BurgerShop may rewrite mockup id on save; verify by GET.
+        verified = self.bs_product(pid).get("data", {})
+        saved = next((m for m in (verified.get("mockups") or []) if isinstance(m, dict) and m.get("src") == url), {})
+        return {"ok": True, "product_id": pid, "image_url": url, "mockup_id": saved.get("id") or mockup_id, "position": saved.get("position", next_pos), "result": result, "verified": bool(saved)}
+
     def extract_first_seller_product_asset(self, product_id: str) -> OrderAsset:
         payload = self.bs_product(product_id)
         data = payload.get("data", payload) if isinstance(payload, dict) else {}

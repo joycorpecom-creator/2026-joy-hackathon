@@ -29,6 +29,14 @@ TOOL_REGISTRY: List[Dict[str, Any]] = [
         "category": "mockup"
     },
     {
+        "name": "bulk_create_mockups",
+        "description": "Bulk an toàn: list product rồi tạo N mockup cho mỗi seller product. Chạy tuần tự, có retry, rate limit, lưu progress bulk_jobs.",
+        "input_schema": {"type": "object", "properties": {"images_per_product": {"type": "integer"}, "max_products": {"type": "integer"}}, "required": ["images_per_product"]},
+        "safe": False,
+        "side_effect": True,
+        "category": "mockup"
+    },
+    {
         "name": "refine_mockup",
         "description": "Điều chỉnh/thay đổi mockup đã tạo trước đó. Dùng khi user nói 'sửa ảnh 3 cho sáng hơn', 'đổi background ảnh 2 thành biển'. Agent tự lấy image_id từ last_mockup_job.images[index]. Trả về ảnh mới với version tăng dần.",
         "input_schema": {

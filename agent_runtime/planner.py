@@ -14,6 +14,7 @@ from .plan_schema import (
     INTENT_CONFIRM_PLAN, INTENT_EDIT_PLAN, INTENT_CANCEL,
     INTENT_GREETING, INTENT_HELP, INTENT_UNKNOWN,
     INTENT_LIST_SELLER_PRODUCTS, INTENT_GET_SELLER_PRODUCT, INTENT_CREATE_FROM_SELLER_PRODUCT,
+    INTENT_BULK_PRODUCT_MOCKUPS,
 )
 from .scene_expander import extract_count, expand_scenes
 from .registry import tool_inventory_for_prompt
@@ -56,8 +57,31 @@ def _has_list_product_intent(text: str) -> bool:
     return any(k in t for k in [
         "tất cả product", "toàn bộ product", "danh sách product", "list product", "lấy product",
         "tất cả sản phẩm", "toàn bộ sản phẩm", "danh sách sản phẩm", "lấy sản phẩm", "lấy toàn bộ sản phẩm",
+        "sản phẩm trên bp", "toàn bộ sản phẩm trên bp", "lấy toàn bộ sản phẩm trên bp", "get all product",
         "sản phẩm đã add", "product đã add"
     ])
+
+
+BULK_TRIGGERS = [
+    "list product và tạo", "list product tạo", "list sản phẩm và tạo", "list sản phẩm tạo",
+    "lấy hết sản phẩm tạo", "lấy hết product tạo", "lấy toàn bộ sản phẩm tạo",
+    "lấy tất cả sản phẩm và tạo", "lấy tất cả product và tạo",
+    "mỗi sản phẩm tạo", "mỗi product tạo",
+]
+
+
+def _has_bulk_product_intent(text: str) -> bool:
+    t = text.lower()
+    # must contain both "list all products" AND mockup keywords
+    has_list = any(k in t for k in [
+        "toàn bộ sản phẩm", "tất cả sản phẩm", "list sản phẩm",
+        "toàn bộ product", "tất cả product", "lấy hết sản phẩm", "lấy hết product",
+        "mỗi sản phẩm", "mỗi product",
+    ])
+    has_mockup = _has_mockup_intent(text)
+    # also check explicit triggers
+    has_trigger = any(k in t for k in BULK_TRIGGERS)
+    return (has_list and has_mockup) or has_trigger
 
 
 def _has_product_info_intent(text: str) -> bool:
@@ -71,6 +95,41 @@ def _has_product_info_intent(text: str) -> bool:
 def _has_refine_intent(text: str) -> bool:
     t = text.lower()
     return any(k in t for k in ["sửa ảnh", "đổi ảnh", "đổi cảnh", "thay cảnh", "chỉnh ảnh", "refine", "làm lại ảnh", "giống ảnh", "ảnh 1", "ảnh 2", "ảnh 3", "ảnh 4", "ảnh 5", "ảnh vừa rồi"])
+
+
+ORDINAL_KW = ["thứ ", "số ", "product thứ ", "sản phẩm thứ ", "product số ", "sản phẩm số "]
+
+
+def extract_ordinal_product_index(text: str) -> Optional[int]:
+    t = text.lower().strip()
+    for kw in ORDINAL_KW:
+        if kw in t:
+            m = re.search(rf"{re.escape(kw)}(\d+)", t)
+            if m:
+                return int(m.group(1))
+    # also just "số 4" standalone
+    m = re.search(r"(?<!\w)số\s+(\d{1,2})(?!\w)", t)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def resolve_ordinal_product_id(text: str, context: Dict[str, Any]) -> Optional[str]:
+    """Resolve 'sản phẩm thứ 4' → actual product_id from last_product_list."""
+    idx = extract_ordinal_product_index(text)
+    if idx is None:
+        return None
+    product_list = context.get("last_product_list") or ((context.get("session") or {}).get("last_product_list"))
+    if not product_list:
+        # fallback to saved state
+        session = context.get("session") or {}
+        product_list = session.get("last_product_list")
+    if not product_list:
+        return None
+    for entry in product_list:
+        if int(entry.get("idx") or 0) == idx:
+            return entry.get("product_id") or ""
+    return None
 
 
 def _image_ref(text: str, context: Dict[str, Any]) -> Optional[str]:
@@ -102,10 +161,32 @@ def deterministic_plan(message: str, context: Dict[str, Any]) -> AgentPlan:
 
     product_ids = extract_seller_product_ids(text)
     current_product = (context.get("session") or {}).get("current_order_id") or context.get("current_product_id")
-    product_id = product_ids[0] if product_ids else current_product
+    ordinal_index = extract_ordinal_product_index(text)
+    ordinal_product = resolve_ordinal_product_id(text, context)
+    # If user explicitly refers to product #N, do NOT silently fall back to current_product.
+    # Falling back caused "sản phẩm thứ 4" to use product #1/current product.
+    product_id = product_ids[0] if product_ids else (ordinal_product if ordinal_index is not None else current_product)
+
+    if ordinal_index is not None and not product_id and _has_mockup_intent(text):
+        return AgentPlan(intent=INTENT_CREATE_FROM_SELLER_PRODUCT, confidence=0.84, batch_count=extract_count(text) or 1, missing_fields=["product_id"], clarifying_question=f"Dạ anh, em chưa có danh sách sản phẩm trong ngữ cảnh để lấy sản phẩm thứ {ordinal_index}. Anh nhắn lại 'lấy toàn bộ sản phẩm' trước, hoặc gửi product_id Axxxxx-xx.", plan_id=plan_id, session_id=session_id, raw_message=text)
 
     if _has_product_info_intent(text) and product_id:
         return AgentPlan(intent=INTENT_GET_SELLER_PRODUCT, confidence=0.93, order_id=product_id, tool_plan=[ToolPlanStep(1, "bs_get_seller_product", {"product_id": product_id})], plan_id=plan_id, session_id=session_id, raw_message=text)
+    if _has_bulk_product_intent(text):
+        # Safe by default: confirm before generating many images.
+        per_product = extract_count(text) or 2
+        per_product = max(1, min(int(per_product), 3))
+        return AgentPlan(
+            intent=INTENT_BULK_PRODUCT_MOCKUPS,
+            confidence=0.92,
+            batch_count=per_product,
+            requires_confirmation=True,
+            reason="bulk product mockups: list products then generate images per product",
+            tool_plan=[ToolPlanStep(1, "bs_list_seller_products", {}), ToolPlanStep(2, "bulk_create_mockups", {"images_per_product": per_product})],
+            plan_id=plan_id,
+            session_id=session_id,
+            raw_message=text,
+        )
     if _has_list_product_intent(text):
         return AgentPlan(intent=INTENT_LIST_SELLER_PRODUCTS, confidence=0.91, tool_plan=[ToolPlanStep(1, "bs_list_seller_products", {})], plan_id=plan_id, session_id=session_id, raw_message=text)
 

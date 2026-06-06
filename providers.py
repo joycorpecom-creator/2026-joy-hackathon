@@ -43,6 +43,16 @@ GEMINI_IMAGE_MODELS = [
 ]
 
 
+QUALITY_DIRECTIVE = (
+    "\n\nQUALITY DIRECTIVE:\n"
+    "Create a premium ecommerce lifestyle mockup, not a flat product cutout. "
+    "Use realistic camera optics, natural shadows, correct perspective, believable contact points, "
+    "clean commercial lighting, sharp product edges, and listing-ready composition. "
+    "Keep the original product/design readable and undistorted. "
+    "Avoid extra text, misspelled text, watermark, distorted hands, warped fabric, duplicate products, messy clutter."
+)
+
+
 def _load_gemini_client():
     """Load Gemini client. Returns (client, model) or (None, None)."""
     from google import genai
@@ -85,6 +95,7 @@ def build_scene_prompt(
             text.replace("{product_name}", product_name)
             .replace("{color_name}", color_name)
             + f"\n\nUser scene/refinement request:\n{user_prompt or 'premium ecommerce ad mockup'}"
+            + QUALITY_DIRECTIVE
         )
 
     if template_raw and "{user_scene}" in template_raw:
@@ -93,6 +104,7 @@ def build_scene_prompt(
             text.replace("{product_name}", product_name)
             .replace("{color_name}", color_name)
             .replace("{user_scene}", user_prompt or "professional lifestyle setting")
+            + QUALITY_DIRECTIVE
         )
 
     return (
@@ -100,7 +112,7 @@ def build_scene_prompt(
         f"Product: {product_name}, color: {color_name}. "
         f"Scene request: {user_prompt}. "
         "No brand logos, no celebrity faces, clean listing-ready image, "
-        "front print area visible and unobstructed."
+        "front print area visible and unobstructed." + QUALITY_DIRECTIVE
     )
 
 
@@ -220,6 +232,7 @@ def try_generate_dual_input_lifestyle_mockup(
         "- No text/watermarks added by you.\n"
         "- No real brand logos or celebrity faces (do not hallucinate people on the design).\n"
         "- Output single image ≥1500×1500 resolution."
+        + QUALITY_DIRECTIVE
     )
 
     try:

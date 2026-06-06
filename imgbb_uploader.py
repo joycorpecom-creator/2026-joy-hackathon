@@ -1,6 +1,7 @@
 """Upload generated mockup PNGs to imgbb and return public image URL."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -9,15 +10,34 @@ import requests
 DEFAULT_IMGBB_API_KEY = "5c9d36c4d8f45696febcd30403b28028"
 
 
-def upload_image(path: str, api_key: str = DEFAULT_IMGBB_API_KEY, timeout: int = 60) -> Dict[str, Any]:
+def get_imgbb_api_key(explicit: str = "") -> str:
+    if explicit and explicit.strip():
+        return explicit.strip()
+    env_key = os.environ.get("IMGBB_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    try:
+        from config_store import load_settings
+        cfg_key = str(load_settings().get("imgbb_api_key", "")).strip()
+        if cfg_key:
+            return cfg_key
+    except Exception:
+        pass
+    return DEFAULT_IMGBB_API_KEY
+
+
+def upload_image(path: str, api_key: str = "", timeout: int = 60) -> Dict[str, Any]:
     p = Path(path)
     if not p.exists():
         return {"ok": False, "error": f"file not found: {path}"}
+    key = get_imgbb_api_key(api_key)
+    if not key:
+        return {"ok": False, "error": "missing IMGBB_API_KEY"}
     try:
         with p.open("rb") as f:
             r = requests.post(
                 "https://api.imgbb.com/1/upload",
-                params={"key": api_key},
+                params={"key": key},
                 files={"image": (p.name, f, "image/png")},
                 timeout=timeout,
             )

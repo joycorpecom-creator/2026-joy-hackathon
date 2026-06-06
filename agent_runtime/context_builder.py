@@ -16,6 +16,7 @@ def build_context(session_id: str, user_message: str = "") -> Dict[str, Any]:
             "current_order_id": state.get("current_order_id"),
             "current_job_id": state.get("current_job_id"),
             "last_plan_id": state.get("last_plan_id"),
+            "last_product_list": state.get("last_product_list") or [],
         },
         "profile": profile,
         "recent_memory": recent,

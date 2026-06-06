@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config_store import load_settings, save_settings
 from core import handle_message
+import burger_memory as mem
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -44,6 +45,11 @@ async def get_settings():
     if safe.get("replicate_api_key"):
         safe["replicate_api_key_masked"] = safe["replicate_api_key"][:4] + "..." + safe["replicate_api_key"][-4:]
         safe["replicate_api_key"] = safe["replicate_api_key"][:4] + "..." + safe["replicate_api_key"][-4:]
+    if safe.get("imgbb_api_key"):
+        safe["imgbb_api_key_masked"] = safe["imgbb_api_key"][:4] + "..." + safe["imgbb_api_key"][-4:]
+        safe["imgbb_api_key"] = safe["imgbb_api_key"][:4] + "..." + safe["imgbb_api_key"][-4:]
+    if safe.get("image_model"):
+        safe["image_model"] = safe["image_model"]
     return JSONResponse(safe)
 
 
@@ -75,8 +81,10 @@ async def test_burgerprints(req: Request):
 @app.post("/api/test-llm")
 async def test_llm(req: Request):
     body = await req.json()
-    key = body.get("api_key", "")
+    key = str(body.get("api_key", "") or "").strip()
     model = body.get("model", "gemini-3-flash-preview")
+    if "..." in key or "***" in key:
+        key = load_settings().get("llm_api_key", "")
     if not key:
         return JSONResponse({"ok": False, "error": "API key empty"})
     try:
@@ -140,6 +148,29 @@ async def api_tools():
     return JSONResponse({"tools": TOOL_REGISTRY, "count": len(TOOL_REGISTRY)})
 
 
+@app.post("/api/products/{product_id}/upload-mockup")
+async def api_upload_mockup_to_product(product_id: str, req: Request):
+    body = await req.json()
+    image_url = str(body.get("image_url") or body.get("public_url") or "").strip()
+    image_id = str(body.get("image_id") or "").strip()
+    try:
+        # If the image is a local generated output, upload binary to imgbb first.
+        if image_url.startswith("/outputs/"):
+            local_path = ROOT / image_url.lstrip("/")
+            from imgbb_uploader import upload_image
+            up = upload_image(str(local_path))
+            if not up.get("ok"):
+                return JSONResponse({"ok": False, "error": "imgbb upload failed", "detail": up}, status_code=500)
+            image_url = up.get("url") or up.get("display_url") or ""
+        if not image_url.startswith(("http://", "https://")):
+            return JSONResponse({"ok": False, "error": "image_url must be public http/https URL"}, status_code=400)
+        from burgerprints import BurgerPrintsClient
+        result = BurgerPrintsClient().bs_append_mockup_to_product(product_id, image_url, image_id=image_id)
+        return JSONResponse({"ok": True, "message": "Uploaded mockup to product", **result})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
 @app.get("/api/state/{session_id}")
 async def api_state(session_id: str):
     import burger_memory as mem
@@ -173,6 +204,19 @@ async def api_agent_logs(lines: int = 400):
         return JSONResponse({"ok": True, "path": str(LOG_PATH), "content": "\n".join(data[-max(1, min(lines, 2000)):])})
     except Exception as e:
         return JSONResponse({"ok": False, "path": str(LOG_PATH), "content": str(e)})
+
+@app.get("/api/bulk/{job_id}")
+async def api_get_bulk_job(job_id: str):
+    job = mem.get_bulk_job(job_id)
+    if not job:
+        raise HTTPException(404, "Bulk job not found")
+    return JSONResponse(job)
+
+
+@app.get("/api/bulk/{job_id}/items")
+async def api_get_bulk_items(job_id: str):
+    return JSONResponse(mem.get_bulk_job(job_id).get("items", []))
+
 
 @app.get("/logs/agent", response_class=HTMLResponse)
 async def agent_logs_page():

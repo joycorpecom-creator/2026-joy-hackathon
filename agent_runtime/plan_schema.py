@@ -8,6 +8,7 @@ INTENT_SYNC_LARK = "sync_lark"
 INTENT_LIST_SELLER_PRODUCTS = "list_seller_products"
 INTENT_GET_SELLER_PRODUCT = "get_seller_product"
 INTENT_CREATE_FROM_SELLER_PRODUCT = "create_mockup_from_seller_product"
+INTENT_BULK_PRODUCT_MOCKUPS = "bulk_product_mockups"
 INTENT_CONFIRM_PLAN = "confirm_plan"
 INTENT_EDIT_PLAN = "edit_plan"
 INTENT_CANCEL = "cancel"
@@ -18,7 +19,7 @@ INTENT_UNKNOWN = "unknown"
 ALL_INTENTS = [
     INTENT_REFINE, INTENT_SYNC_LARK,
     INTENT_LIST_SELLER_PRODUCTS, INTENT_GET_SELLER_PRODUCT, INTENT_CREATE_FROM_SELLER_PRODUCT,
-    INTENT_CONFIRM_PLAN, INTENT_EDIT_PLAN, INTENT_CANCEL,
+    INTENT_BULK_PRODUCT_MOCKUPS, INTENT_CONFIRM_PLAN, INTENT_EDIT_PLAN, INTENT_CANCEL,
     INTENT_GREETING, INTENT_HELP, INTENT_UNKNOWN,
 ]
 
@@ -119,6 +120,15 @@ def needs_confirmation(plan: AgentPlan) -> bool:
 
 def plan_display_text(plan: AgentPlan) -> str:
     lines = ["Dạ anh, em đã hiểu. Đây là plan dự kiến:"]
+    if plan.intent == INTENT_BULK_PRODUCT_MOCKUPS:
+        count = plan.batch_count or 2
+        lines.append("- Flow: list product → tạo mockup từng sản phẩm")
+        lines.append(f"- Mỗi sản phẩm: {count} ảnh")
+        lines.append("- Giới hạn an toàn: tối đa 10 sản phẩm/lần")
+        lines.append("- Chạy tuần tự, retry 1 lần/ảnh, lưu progress vào DB")
+        lines.append("")
+        lines.append("Anh nhắn 'ok tạo' để em chạy bulk, hoặc 'huỷ' để dừng.")
+        return "\n".join(lines)
     if plan.order_id:
         lines.append(f"- Product: {plan.order_id}")
     count = plan.batch_count or len(plan.scenes)

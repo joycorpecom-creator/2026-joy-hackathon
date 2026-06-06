@@ -62,6 +62,17 @@ def _conn() -> sqlite3.Connection:
         "id TEXT PRIMARY KEY, plan_id TEXT, job_id TEXT, tool_name TEXT, args_json TEXT, result_json TEXT, "
         "status TEXT, started_at INTEGER, finished_at INTEGER, error TEXT)"
     )
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS bulk_jobs ("
+        "id TEXT PRIMARY KEY, chat_id TEXT, plan_id TEXT, status TEXT, total INTEGER, done INTEGER, "
+        "failed INTEGER, config_json TEXT, created_at INTEGER, updated_at INTEGER, completed_at INTEGER)"
+    )
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS bulk_job_items ("
+        "id TEXT PRIMARY KEY, job_id TEXT, product_id TEXT, product_title TEXT, scene_index INTEGER, "
+        "scene_prompt TEXT, status TEXT, image_id TEXT, image_url TEXT, error TEXT, retry_count INTEGER, "
+        "created_at INTEGER, updated_at INTEGER)"
+    )
     # Older dev build used contentless FTS, causing stored chat_id/kind to read as NULL.
     try:
         bad = c.execute("SELECT chat_id FROM events_fts LIMIT 1").fetchone()
@@ -232,6 +243,39 @@ def save_mockup_image(image: Dict[str, Any]) -> None:
             "INSERT OR REPLACE INTO mockup_images(id, job_id, order_id, scene_index, scene_prompt, image_url, local_path, version, parent_image_id, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (image.get("id"), image.get("job_id"), image.get("order_id"), image.get("scene_index"), image.get("scene_prompt"), image.get("image_url"), image.get("local_path"), image.get("version", 1), image.get("parent_image_id"), json.dumps(image.get("metadata", {}), ensure_ascii=False, default=str), image.get("created_at", _now())),
         )
+
+
+def save_bulk_job(chat_id: str, job: Dict[str, Any]) -> None:
+    now = _now()
+    with _conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO bulk_jobs(id, chat_id, plan_id, status, total, done, failed, config_json, created_at, updated_at, completed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM bulk_jobs WHERE id=?), ?), ?, ?)",
+            (job.get("id"), str(chat_id), job.get("plan_id", ""), job.get("status", "pending"), int(job.get("total", 0)), int(job.get("done", 0)), int(job.get("failed", 0)), json.dumps(job.get("config", {}), ensure_ascii=False, default=str), job.get("id"), now, now, job.get("completed_at")),
+        )
+
+
+def save_bulk_item(item: Dict[str, Any]) -> None:
+    now = _now()
+    with _conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO bulk_job_items(id, job_id, product_id, product_title, scene_index, scene_prompt, status, image_id, image_url, error, retry_count, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM bulk_job_items WHERE id=?), ?), ?)",
+            (item.get("id"), item.get("job_id"), item.get("product_id"), item.get("product_title", ""), item.get("scene_index"), item.get("scene_prompt", ""), item.get("status", "pending"), item.get("image_id", ""), item.get("image_url", ""), item.get("error", ""), int(item.get("retry_count", 0)), item.get("id"), now, now),
+        )
+
+
+def get_bulk_job(job_id: str) -> Dict[str, Any]:
+    with _conn() as c:
+        row = c.execute("SELECT id, chat_id, plan_id, status, total, done, failed, config_json, created_at, updated_at, completed_at FROM bulk_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            return {}
+        items = c.execute("SELECT id, product_id, product_title, scene_index, scene_prompt, status, image_id, image_url, error, retry_count FROM bulk_job_items WHERE job_id=? ORDER BY rowid", (job_id,)).fetchall()
+    return {
+        "id": row[0], "chat_id": row[1], "plan_id": row[2], "status": row[3], "total": row[4], "done": row[5], "failed": row[6],
+        "config": json.loads(row[7] or "{}"), "created_at": row[8], "updated_at": row[9], "completed_at": row[10],
+        "items": [{"id": r[0], "product_id": r[1], "product_title": r[2], "scene_index": r[3], "scene_prompt": r[4], "status": r[5], "image_id": r[6], "image_url": r[7], "error": r[8], "retry_count": r[9]} for r in items]
+    }
 
 
 def record_turn(chat_id: str, user: str, assistant: str) -> None:

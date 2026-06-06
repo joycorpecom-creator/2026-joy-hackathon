@@ -21,12 +21,14 @@ PRESERVATION_RULES = """CRITICAL PRESERVATION RULES — VIOLATION MEANS FAILURE:
 - The design placement on the final product must match the reference placement (chest, full‑front, etc.)."""
 
 TECHNICAL_SPEC = """Technical specifications:
-- Professional product photography quality
-- 4K‑8K resolution equivalent, crisp and clear
-- Soft natural lighting with gentle shadows
-- Shallow depth of field (background slightly blurred, product/model sharp)
-- Front‑facing or 3/4 angle, full product clearly visible
-- Marketplace‑ready for Etsy, Amazon, Shopify listings
+- Premium commercial product photography quality, marketplace-ready
+- 4K‑8K resolution equivalent, crisp edges, clean high-detail texture
+- Soft natural lighting with believable shadows and contact points
+- Correct perspective, realistic fabric folds/hand contact, no pasted-on look
+- Shallow depth of field: background slightly blurred, product/model sharp
+- Front-facing or 3/4 angle, full product clearly visible and readable
+- Balanced composition with product as hero subject, no clutter
+- Natural human anatomy, realistic skin/hands, no plastic AI look
 - No harsh studio lights, no overexposed areas, no lens flare"""
 
 SCENE_TEMPLATES = {

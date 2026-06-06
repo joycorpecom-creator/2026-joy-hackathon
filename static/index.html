@@ -194,7 +194,8 @@ a{color:var(--accent);text-decoration:none}
   <div style="font-size:11px;color:var(--text-muted);padding:4px 12px 8px;text-transform:uppercase;letter-spacing:.5px">Recent</div>
  </div>
  <div class="sidebar-footer">
-  <button onclick="newChat()" title="New Chat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New</button>
+  <button onclick="resetSession()" title="Reset current session"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 2-9"/></svg> Reset</button>
+  <button onclick="newSession()" title="New independent session"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New Session</button>
   <button onclick="openSettings()" title="Settings"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg> Config</button>
  </div>
 </aside>
@@ -252,6 +253,11 @@ a{color:var(--accent);text-decoration:none}
      <input id="cfg-llm-key" type="password" placeholder="AIza...">
      <div class="help">Google AI Studio API key. Saved in .env as GEMINI_API_KEY.</div>
     </div>
+    <div class="form-group">
+     <label>Image Model</label>
+     <input id="cfg-image-model" value="gemini-3.1-flash-image" placeholder="gemini-3.1-flash-image">
+     <div class="help">Model used for generated mockup images.</div>
+    </div>
     <button class="btn btn-secondary" onclick="testLLM()">Test Connection</button>
     <div class="test-result" id="llmResult"></div>
    </div>
@@ -267,6 +273,11 @@ a{color:var(--accent);text-decoration:none}
     </div>
     <button class="btn btn-secondary" onclick="testBP()">Test API</button>
     <div class="test-result" id="bpResult"></div>
+    <div class="form-group">
+     <label>ImgBB API Key</label>
+     <input id="cfg-imgbb-key" type="password" placeholder="ImgBB API key">
+     <div class="help">Used to publish generated local images before uploading them back to BurgerShop.</div>
+    </div>
    </div>
    <!-- Telegram Tab -->
    <div class="settings-section" id="sec-tg">
@@ -333,6 +344,8 @@ a{color:var(--accent);text-decoration:none}
 let chatHistory = [];
 let currentSettings = {};
 const CHAT_ID = 'web';
+let currentSessionId = localStorage.getItem('joy_session_id') || `${CHAT_ID}_${Date.now()}`;
+localStorage.setItem('joy_session_id', currentSessionId);
 let pendingPlan = null; // track pending plan for confirm/edit
 let timelineSteps = 0; // simple counter for tool timeline
 
@@ -344,6 +357,7 @@ async function init() {
     // fill masked values
     document.getElementById('cfg-llm-model').value = currentSettings.llm_model || 'gemini-3-flash-preview';
     document.getElementById('cfg-llm-key').value = currentSettings.llm_api_key || '';
+    document.getElementById('cfg-image-model').value = currentSettings.image_model || 'gemini-3.1-flash-image';
     document.getElementById('cfg-bp-key').value = currentSettings.burgerprints_api_key || '';
     document.getElementById('cfg-bp-url').value = currentSettings.burgerprints_base_url || '';
     document.getElementById('cfg-tg-token').value = currentSettings.telegram_bot_token || '';
@@ -352,6 +366,7 @@ async function init() {
     document.getElementById('cfg-sync-enabled').value = currentSettings.sync_enabled || 'false';
     document.getElementById('cfg-sync-webhook').value = currentSettings.sync_webhook_url || '';
     document.getElementById('cfg-sync-secret').value = currentSettings.sync_secret || '';
+    document.getElementById('cfg-imgbb-key').value = currentSettings.imgbb_api_key || '';
   } catch(e) { console.error('init err', e) }
 }
 init();
@@ -379,7 +394,7 @@ async function sendMessage() {
     let r = await fetch('/api/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: msg, history: chatHistory, chat_id: CHAT_ID, session_id: CHAT_ID})
+      body: JSON.stringify({message: msg, history: chatHistory, chat_id: CHAT_ID, session_id: currentSessionId})
     });
     let d = await r.json();
     loadingEl.remove();
@@ -470,7 +485,7 @@ async function confirmPlan() {
   try {
     let r = await fetch('/api/chat', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({message:'ok tạo', session_id:CHAT_ID})
+      body:JSON.stringify({message:'ok tạo', chat_id:CHAT_ID, session_id:currentSessionId})
     });
     let d = await r.json();
     let el = document.querySelector('.confirmLoading');
@@ -513,6 +528,8 @@ function renderMockupGallery(d) {
       let sc = im.scene || '';
       let imgIdx = im.index || (idx + 1);
       let imgId = im.image_id || '';
+      let productId = im.product_id || (d.meta && d.meta.product_id) || '';
+      let publicUrl = im.public_url || '';
       html += `<div class="image-card">
         <img src="${escapeHtml(imgSrc)}" alt="mockup ${imgIdx}" loading="lazy">
         <div class="image-info">
@@ -521,6 +538,7 @@ function renderMockupGallery(d) {
           <div class="image-actions">
             <a href="${escapeHtml(imgSrc)}" download="mockup-${escapeHtml(String(imgIdx))}.png"><span aria-hidden="true">↓</span> Download</a>
             <button onclick="refineImage('${escapeHtml(String(imgIdx))}')"><span aria-hidden="true">✎</span> Edit</button>
+            ${productId ? `<button class="upload-btn-image" onclick="uploadImageToProduct('${escapeHtml(productId)}','${escapeHtml(imgSrc)}','${escapeHtml(imgId)}',this)"><span aria-hidden="true">↑</span> Upload</button>` : ''}
           </div>
         </div>
       </div>`;
@@ -535,6 +553,34 @@ function renderMockupGallery(d) {
 function refineImage(idx) {
   document.getElementById('userInput').value = `Tinh chỉnh ảnh ${idx}: `;
   document.getElementById('userInput').focus();
+}
+
+async function uploadImageToProduct(productId, imageUrl, imageId, btn) {
+  if (!productId) return;
+  btn.disabled = true;
+  btn.textContent = '...';
+  try {
+    let r = await fetch(`/api/products/${encodeURIComponent(productId)}/upload-mockup`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({image_url: imageUrl, public_url: imageUrl, image_id: imageId})
+    });
+    let d = await r.json();
+    if (d.ok) {
+      btn.textContent = '✓ Uploaded';
+      btn.style.borderColor = '#10b981';
+      btn.style.color = '#10b981';
+    } else {
+      btn.textContent = '✗ Fail';
+      alert('Upload failed: ' + (d.error || 'unknown'));
+      btn.disabled = false;
+      btn.textContent = '↑ Upload';
+    }
+  } catch(e) {
+    btn.textContent = '✗ Error';
+    alert('Upload error: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '↑ Upload';
+  }
 }
 
 function normalizeOutputUrl(url) {
@@ -567,15 +613,32 @@ function addToHistory(msg) {
   h.appendChild(item);
 }
 
-async function newChat() {
+function clearChatView() {
   document.getElementById('chatInner').innerHTML = `<div class="empty-state"><div class="slogan-mark">JOURNEY<br>OF YOU</div></div>`;
   chatHistory = [];
   pendingPlan = null;
+}
+
+async function resetSession() {
+  clearChatView();
   try {
     await fetch('/api/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: '/new', chat_id: CHAT_ID, session_id: CHAT_ID})
+      body: JSON.stringify({message: '/new', chat_id: CHAT_ID, session_id: currentSessionId})
+    });
+  } catch(e) {}
+}
+
+async function newSession() {
+  currentSessionId = `${CHAT_ID}_${Date.now()}`;
+  localStorage.setItem('joy_session_id', currentSessionId);
+  clearChatView();
+  try {
+    await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: '/new', chat_id: CHAT_ID, session_id: currentSessionId})
     });
   } catch(e) {}
 }
@@ -610,8 +673,12 @@ function renderTextWithImages(d) {
   const extra = images.map(im => normalizeOutputUrl((im && im.url) || '')).filter(u => u && !existing.has(u));
   if (extra.length) {
     html += '<div class="result-grid">';
-    extra.forEach((url, idx) => {
-      html += `<div><span>Sản phẩm ${idx + 1}</span><img src="${escapeHtml(url)}" alt="product ${idx + 1}" style="width:100%;border-radius:6px;margin-top:4px"></div>`;
+    images.forEach((im, idx) => {
+      const url = normalizeOutputUrl((im && im.url) || '');
+      if (!url || existing.has(url)) return;
+      const title = (im && (im.title || im.scene)) || '';
+      const pid = (im && im.product_id) || '';
+      html += `<div><span>Ảnh ${idx + 1}</span><img src="${escapeHtml(url)}" alt="Ảnh ${idx + 1}" style="width:100%;border-radius:6px;margin-top:4px"><strong>${escapeHtml([title, pid].filter(Boolean).join(' - '))}</strong></div>`;
     });
     html += '</div>';
   }
@@ -651,12 +718,14 @@ async function saveSettings() {
     llm_provider: document.getElementById('cfg-llm-provider').value,
     llm_model: document.getElementById('cfg-llm-model').value.trim(),
     llm_api_key: document.getElementById('cfg-llm-key').value.trim(),
+    image_model: document.getElementById('cfg-image-model').value.trim(),
     sync_enabled: document.getElementById('cfg-sync-enabled').value,
     sync_provider: 'n8n',
     sync_webhook_url: document.getElementById('cfg-sync-webhook').value.trim(),
     sync_secret: document.getElementById('cfg-sync-secret').value.trim(),
     sync_send_image_url: 'true',
     sync_timeout_seconds: '10',
+    imgbb_api_key: document.getElementById('cfg-imgbb-key').value.trim(),
   };
   try {
     let r = await fetch('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});

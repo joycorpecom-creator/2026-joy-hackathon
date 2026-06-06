@@ -540,22 +540,34 @@ class BurgerMockupAgent:
                         mem.record_turn(str(chat_id), message, final_text)
                     except Exception:
                         pass
+                    public_url = f"http://36.50.26.198:8000{mockup_url}" if str(mockup_url).startswith("/") else mockup_url
                     return {
                         "type": "mockup",
                         "content": final_text,
                         "image": mockup_url,
+                        "images": [{"url": mockup_url, "public_url": public_url, "scene": scene, "index": 1, "product_id": m.get("product_id", ""), "image_id": m.get("image_id", "")}],
                         "meta": {
                             "provider": provider, "integrity": m.get("integrity", 0),
                             "size": size_val, "time": elapsed, "cost": cost,
-                            "product": product, "color": color,
+                            "product": product, "product_id": m.get("product_id", ""), "color": color,
                             "warnings": m.get("warnings", []),
                         },
                     }
 
-                images = [
-                    {"url": x.get("mockup_url", ""), "scene": x.get("scene", ""), "product": x.get("product", ""), "provider": x.get("provider", ""), "integrity": x.get("integrity", 0), "cost": x.get("cost", "")}
-                    for x in mockups if x.get("mockup_url")
-                ]
+                images = []
+                for idx, x in enumerate([m for m in mockups if m.get("mockup_url")], start=1):
+                    u = x.get("mockup_url", "")
+                    images.append({
+                        "url": u,
+                        "public_url": f"http://36.50.26.198:8000{u}" if str(u).startswith("/") else u,
+                        "scene": x.get("scene", ""),
+                        "index": idx,
+                        "product_id": x.get("product_id", ""),
+                        "product": x.get("product", ""),
+                        "provider": x.get("provider", ""),
+                        "integrity": x.get("integrity", 0),
+                        "cost": x.get("cost", ""),
+                    })
                 final_text = f"Dạ anh, em đã tạo {len(images)} mockup cho {result.get('product', 'seller product')}:"
                 for im in images:
                     final_text += f"\n• {im['scene']}"
