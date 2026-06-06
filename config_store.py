@@ -20,7 +20,7 @@ DEFAULTS = {
     "llm_api_key": "",
     "image_model": "gemini-3.1-flash-image",
     "replicate_api_key": "",
-    "imgbb_api_key": "5c9d36c4d8f45696febcd30403b28028",
+    "imgbb_api_key": "",
     "sync_enabled": "false",
     "sync_provider": "n8n",
     "sync_webhook_url": "",

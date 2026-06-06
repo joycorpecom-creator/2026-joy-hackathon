@@ -143,7 +143,7 @@ def compile_image_prompt(
         audience=brief.get("audience", "premium ecommerce customers"),
         creative_direction=brief.get("creative_direction", "premium lifestyle photography"),
         model_description=_build_model_description(model),
-        model_age=model.get("age_range", "22-35"),
+        model_age=model.get("age_range", "24-50"),
         model_ethnicity=model.get("ethnicity", "diverse"),
         scene_index=scene.get("scene_id", scene_idx + 1),
         scene_block=scene_block,

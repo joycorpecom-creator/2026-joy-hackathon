@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 import requests
 
-DEFAULT_IMGBB_API_KEY = "5c9d36c4d8f45696febcd30403b28028"
+DEFAULT_IMGBB_API_KEY = ""
 
 
 def get_imgbb_api_key(explicit: str = "") -> str:

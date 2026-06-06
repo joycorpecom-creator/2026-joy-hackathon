@@ -39,3 +39,18 @@ def test_compiled_prompt_contains_reasoned_brief_and_preservation_rules():
     assert "clean city wall" in prompt
     assert "preserve exact product color" in prompt
     assert "No redesign" in prompt
+
+
+def test_default_model_direction_uses_mature_professional_faceless_emotion():
+    brief = build_fallback_image_brief(
+        user_scene="mockup chuyên nghiệp thần thái mạnh không mặt",
+        product_name="AOP Unisex Hoodie",
+        product_type="AOP Unisex Hoodie - Soft Felt Standard",
+        color="black",
+        count=1,
+    )
+    assert brief["model"]["age_range"] == "24-50"
+    assert "professional" in brief["model"]["style"].lower()
+    scene = brief["scenes"][0]
+    assert "face" in scene["composition"].lower()
+    assert "emotion" in scene["pose"].lower()

@@ -45,7 +45,7 @@ You MUST output exactly one JSON object with NO markdown wrapping, NO code fence
   "model": {{
     "ethnicity": "specific, respectful descriptor",
     "gender": "male|female|unisex",
-    "age_range": "e.g. 22-35",
+    "age_range": "e.g. 24-50",
     "style": "e.g. urban confident, casual relaxed, premium classic"
   }},
   "scenes": [
@@ -70,7 +70,10 @@ You MUST output exactly one JSON object with NO markdown wrapping, NO code fence
 RULES:
 - Scenes MUST be diverse: different backgrounds, poses, lighting between scenes.
 - If user mentions "da màu" or "Mỹ" or "American", model ethnicity MUST be "Black / African American" or specific.
+- Default model age range should be 24-50 unless the user explicitly requests younger/older.
+- Default model mood: professional, mature, emotionally expressive, confident commercial presence.
 - If user says "cá tính", creative direction should be bold, expressive, confident.
+- If user requests "không mặt" / faceless / emotional body language, frame with partial/no face emphasis: crop from neck/chest/torso or show face out of focus/turned away; emotion expressed through posture, hands, walking angle, shoulders, garment movement.
 - Every scene must have all fields filled — no nulls, no placeholders.
 - Model description must be specific and respectful, not stereotypical.
 - The product print/design must ALWAYS be preserved exactly in preservation_rules.
@@ -199,8 +202,8 @@ def build_fallback_image_brief(
     # Detect audience from Vietnamese keywords
     audience = "general US market customers"
     model_ethnicity = "diverse / mixed"
-    model_style = "casual relaxed"
-    creative = "premium product lifestyle photography"
+    model_style = "professional, mature, emotionally expressive, confident commercial presence"
+    creative = "premium product lifestyle photography with expressive professional model direction"
 
     user_lower = user_scene.lower()
 
@@ -243,7 +246,7 @@ def build_fallback_image_brief(
         "model": {
             "ethnicity": model_ethnicity,
             "gender": model_gender,
-            "age_range": "22-35",
+            "age_range": "24-50",
             "style": model_style,
         },
         "scenes": scenes,
@@ -263,17 +266,17 @@ def _generate_default_scenes(count: int) -> List[Dict[str, Any]]:
             "scene_id": 1,
             "concept": "urban outdoor lifestyle portrait",
             "background": "clean modern city wall, late afternoon light",
-            "pose": "confident standing pose, hands relaxed, product front fully visible",
+            "pose": "confident expressive standing pose, hands relaxed, product front fully visible, emotion through strong posture and stance, face optional — can be cropped from neck/torso or turned away, emotional weight expressed through body language and garment movement",
             "camera": "85mm f/1.2, shallow depth of field",
             "lighting": "golden hour side light, warm tones",
-            "composition": "hero product centered, clean framing, no clutter",
+            "composition": "hero product centered, clean framing, no clutter, face not required; crop can prioritize torso/product and expressive body language",
             "negative": ["no warped print", "no cluttered background", "no extra people"],
         },
         {
             "scene_id": 2,
             "concept": "studio editorial fashion look",
             "background": "seamless neutral backdrop, soft gray or cream",
-            "pose": "casual seated pose on studio stool, product front visible",
+            "pose": "casual expressive seated pose on studio stool, product front visible, emotion in posture, face turned slightly away or out of frame, weight shifts into shoulders and hands",
             "camera": "50mm f/1.4, medium depth of field",
             "lighting": "softbox key light + rim light, clean commercial",
             "composition": "product centered, fashion editorial framing, stylish minimal",
@@ -283,7 +286,7 @@ def _generate_default_scenes(count: int) -> List[Dict[str, Any]]:
             "scene_id": 3,
             "concept": "cozy indoor lifestyle scene",
             "background": "modern apartment interior, natural window light, plants",
-            "pose": "relaxed leaning against wall or sitting on sofa edge",
+            "pose": "relaxed but emotionally expressive leaning pose, hands/shoulders tell the mood, product visible, face not required and can be cropped or softly hidden",
             "camera": "45mm f/2.8, natural depth of field",
             "lighting": "soft window light, natural ambient",
             "composition": "product in context, warm inviting tone, lifestyle authentic",
@@ -293,7 +296,7 @@ def _generate_default_scenes(count: int) -> List[Dict[str, Any]]:
             "scene_id": 4,
             "concept": "outdoor park / nature lifestyle",
             "background": "urban park, greenery, soft natural light",
-            "pose": "walking naturally, mid-stride, candid feel",
+            "pose": "walking naturally, mid-stride, candid emotional body language, face may be turned away, product front kept readable",
             "camera": "135mm f/2.0, compressed background blur",
             "lighting": "open shade, soft flattering light",
             "composition": "product as outfit hero, natural candid capture style",
