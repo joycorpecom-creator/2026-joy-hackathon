@@ -58,7 +58,8 @@ class AgentOrchestrator:
             if not ok2:
                 return {"type": "text", "content": f"Dạ lỗi plan: {'; '.join(errors2)}"}
 
-        if needs_confirmation(plan) and not plan.requires_confirmation:
+        from .planner import _wants_execute_now
+        if needs_confirmation(plan) and not _wants_execute_now(plan.raw_message):
             plan.requires_confirmation = True
         if plan.requires_confirmation:
             plan.status = "waiting_confirmation"
