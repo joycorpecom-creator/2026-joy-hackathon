@@ -160,7 +160,7 @@ a{color:var(--accent);text-decoration:none}
 .plan-card,.timeline,.gallery-card{background:linear-gradient(180deg,#111827,#0b1220);border:1px solid rgba(255,255,255,.10);border-radius:18px;padding:16px;box-shadow:0 16px 48px rgba(2,6,23,.18);color:#f9fafb;margin:6px 0}
 .plan-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px}.plan-head h3{font-size:18px;margin:0}.plan-meta,.mock-meta{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.pill{font-size:12px;color:#cbd5e1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);padding:6px 10px;border-radius:999px}.scene-list{display:flex;flex-direction:column;gap:9px;margin-top:12px}.scene-item{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:11px}.scene-no{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#fb923c;font-weight:800;margin-bottom:5px}.scene-prompt{color:#e5e7eb;font-size:13px;line-height:1.5}.action-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.v2-btn{border:none;border-radius:12px;padding:11px 14px;font-weight:700;cursor:pointer;font-family:inherit}.v2-btn.primary{background:var(--accent);color:#fff}.v2-btn.ghost{background:rgba(255,255,255,.09);color:#e5e7eb;border:1px solid rgba(255,255,255,.12)}.v2-btn:hover{filter:brightness(1.06)}
 .timeline{margin-top:12px;padding:12px}.timeline-title{font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.12em;margin-bottom:9px;font-weight:800}.timeline-steps{display:grid;gap:7px}.step{display:flex;gap:8px;align-items:center;color:#cbd5e1;font-size:12px}.dot{width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.12)}
-.gallery-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.image-card{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);border-radius:16px;overflow:hidden}.image-card img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;background:#030712}.image-info{padding:12px}.image-title{font-weight:800;color:#fff;margin-bottom:4px}.image-scene{color:#cbd5e1;font-size:12px;min-height:18px}.image-actions{display:flex;gap:8px;margin-top:10px}.image-actions a,.image-actions button{flex:1;text-align:center;text-decoration:none;border-radius:10px;padding:9px 10px;font-size:12px;font-weight:700;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.08);color:#e5e7eb;cursor:pointer}.error-card{background:#2a0f13;border:1px solid rgba(239,68,68,.35);color:#fecaca;border-radius:14px;padding:14px}
+.gallery-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.image-card{background:#fff;border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm)}.image-card img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;background:#fff}.image-info{padding:10px}.image-title{font-weight:700;color:var(--text);font-size:13px;margin-bottom:4px}.image-scene{color:var(--text-secondary);font-size:12px;line-height:1.45;min-height:18px}.image-actions{display:flex;gap:8px;margin-top:10px}.image-actions a,.image-actions button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;text-align:center;text-decoration:none;border-radius:9px;padding:8px 10px;font-size:12px;font-weight:700;border:1px solid var(--border);background:#fff;color:#111827;cursor:pointer}.image-actions a{border-color:rgba(255,107,74,.35);color:var(--accent);background:var(--accent-light)}.image-actions button:hover,.image-actions a:hover{filter:brightness(.98);border-color:var(--accent)}.error-card{background:#2a0f13;border:1px solid rgba(239,68,68,.35);color:#fecaca;border-radius:14px;padding:14px}
 /* Responsive */
 @media(max-width:768px){
  .sidebar{display:none}
@@ -263,7 +263,7 @@ a{color:var(--accent);text-decoration:none}
     </div>
     <div class="form-group">
      <label>Base URL</label>
-     <input id="cfg-bp-url" value="https://api.burgerprints.com/v2">
+     <input id="cfg-bp-url" value="https://api.burgerprints.com/v1">
     </div>
     <button class="btn btn-secondary" onclick="testBP()">Test API</button>
     <div class="test-result" id="bpResult"></div>
@@ -384,11 +384,10 @@ async function sendMessage() {
     let d = await r.json();
     loadingEl.remove();
 
-    // Show tool timeline mock
-    showTimeline(d.type);
-
+    // Only show final agent response; hide internal thinking/progress cards.
     if (d.type === 'plan_preview') {
-      renderPlanPreview(d);
+      pendingPlan = {plan:d.plan, plan_id:d.plan_id};
+      addMessage('bot', renderTextContent(d.content || ''));
       addToHistory(msg);
     } else if (d.type === 'mockup') {
       renderMockupGallery(d);
@@ -396,8 +395,8 @@ async function sendMessage() {
     } else if (d.type === 'error') {
       addMessage('bot', `<div class="error-card">⚠️ ${escapeHtml(d.content || 'Lỗi không xác định')}</div>`);
     } else {
-      // text or fallback
-      addMessage('bot', renderTextContent(d.content || ''));
+      // text / product info fallback. Preserve attached images from API.
+      addMessage('bot', renderTextWithImages(d));
     }
   } catch(e) {
     loadingEl.remove();
@@ -476,7 +475,6 @@ async function confirmPlan() {
     let d = await r.json();
     let el = document.querySelector('.confirmLoading');
     if (el) el.remove();
-    showTimeline('mockup');
     if (d.type === 'mockup') renderMockupGallery(d);
     else if (d.type === 'error') addMessage('bot', `<div class="error-card">⚠️ ${escapeHtml(d.content)}</div>`);
     else addMessage('bot', renderTextContent(d.content || ''));
@@ -504,6 +502,9 @@ function renderMockupGallery(d) {
     if (m.color) html += `<span class="pill">🎨 ${escapeHtml(m.color)}</span>`;
     html += `</div>`;
   }
+  if (m.cost || m.cost_usd) {
+    html += `<div class="mock-meta"><span class="pill cost">💰 ${escapeHtml(String(m.cost || m.cost_usd || ''))}</span></div>`;
+  }
   let images = d.images || [];
   if (images.length) {
     html += `<div class="gallery-grid">`;
@@ -518,8 +519,8 @@ function renderMockupGallery(d) {
           <div class="image-title">Ảnh ${escapeHtml(String(imgIdx))}</div>
           <div class="image-scene">${escapeHtml(sc)}</div>
           <div class="image-actions">
-            <a href="${escapeHtml(imgSrc)}" download="${escapeHtml(String(imgIdx))}.png">⬇️ Tải</a>
-            <button onclick="refineImage('${escapeHtml(String(imgIdx))}')">🔄 Tinh chỉnh</button>
+            <a href="${escapeHtml(imgSrc)}" download="mockup-${escapeHtml(String(imgIdx))}.png"><span aria-hidden="true">↓</span> Download</a>
+            <button onclick="refineImage('${escapeHtml(String(imgIdx))}')"><span aria-hidden="true">✎</span> Edit</button>
           </div>
         </div>
       </div>`;
@@ -599,6 +600,22 @@ function renderTextContent(text) {
   }
   if (last < s.length) parts.push(`<p>${formatInlineMarkdown(s.slice(last))}</p>`);
   return parts.join('');
+}
+
+function renderTextWithImages(d) {
+  let html = renderTextContent(d.content || '');
+  const images = Array.isArray(d.images) ? d.images : [];
+  const existing = new Set();
+  String(d.content || '').replace(/!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/g, (_, url) => { existing.add(url); return ''; });
+  const extra = images.map(im => normalizeOutputUrl((im && im.url) || '')).filter(u => u && !existing.has(u));
+  if (extra.length) {
+    html += '<div class="result-grid">';
+    extra.forEach((url, idx) => {
+      html += `<div><span>Sản phẩm ${idx + 1}</span><img src="${escapeHtml(url)}" alt="product ${idx + 1}" style="width:100%;border-radius:6px;margin-top:4px"></div>`;
+    });
+    html += '</div>';
+  }
+  return html;
 }
 
 function formatInlineMarkdown(s) {

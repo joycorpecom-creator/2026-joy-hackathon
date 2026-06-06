@@ -16,6 +16,7 @@ uploads/
 
 # local archives
 *.zip
+archive/
 memory/state/
 memory/burger_memory.sqlite3
 memory/session_*.json

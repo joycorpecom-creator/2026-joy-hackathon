@@ -35,14 +35,18 @@ def send_photo(token: str, chat_id: int, path: str, caption: str):
 
 
 def send_photo_url(token: str, chat_id: int, url: str, caption: str):
-    """Download remote image and send as Telegram photo."""
+    """Download remote image and send as Telegram photo, with source URL in caption."""
     r = requests.get(url, timeout=20)
     r.raise_for_status()
-    ext = url.rsplit(".", 1)[-1] if "." in url else "jpg"
+    ctype = (r.headers.get("content-type") or "").lower()
+    if ctype and not ctype.startswith("image/"):
+        raise RuntimeError(f"URL is not image content-type: {ctype}")
+    ext = url.rsplit(".", 1)[-1].split("?", 1)[0] if "." in url else "jpg"
     fname = f"/tmp/tg_img_{chat_id}_{int(time.time())}.{ext}"
     with open(fname, "wb") as f:
         f.write(r.content)
-    send_photo(token, chat_id, fname, caption)
+    full_caption = f"{caption[:700]}\n\nLink BP: {url}" if url not in caption else caption
+    send_photo(token, chat_id, fname, full_caption)
     try:
         os.remove(fname)
     except Exception:
@@ -114,16 +118,27 @@ async def process_message(token: str, chat_id: int, text: str, msg: dict = None)
     else:
         content = result.get("content", "No response")
         image_matches = re.findall(r"!\[([^\]]*)\]\((https?://[^\s)]+)\)", content or "")
+        api_images = []
+        seen = {url for _, url in image_matches}
+        for im in (result.get("images") or []):
+            if not isinstance(im, dict):
+                continue
+            url = (im.get("url") or "").strip()
+            if url and url not in seen:
+                seen.add(url)
+                api_images.append((im.get("scene") or im.get("title") or "BP image", url))
+        all_images = image_matches + api_images
         text_clean = re.sub(r"!\[[^\]]*\]\(https?://[^\s)]+\)", "", content or "").strip()
         if text_clean:
-            send_text(token, chat_id, text_clean)
-        if image_matches:
-            for alt, url in image_matches[:10]:
+            links = "\n".join([f"- {url}" for _, url in all_images[:10]])
+            send_text(token, chat_id, text_clean + (f"\n\nLink BP:\n{links}" if links else ""))
+        if all_images:
+            for alt, url in all_images[:10]:
                 try:
-                    send_photo_url(token, chat_id, url, alt[:200] if alt else "Order")
+                    send_photo_url(token, chat_id, url, alt[:200] if alt else "BP image")
                 except Exception as e:
                     send_text(token, chat_id, f"Không gửi được ảnh: {url}\n{e}")
-        if not text_clean and not image_matches:
+        if not text_clean and not all_images:
             send_text(token, chat_id, content)
 
 

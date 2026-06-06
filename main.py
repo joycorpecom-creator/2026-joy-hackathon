@@ -60,7 +60,7 @@ async def update_settings(req: Request):
 async def test_burgerprints(req: Request):
     body = await req.json()
     key = body.get("api_key", "")
-    url = body.get("base_url", "https://api.burgerprints.com/v2").rstrip("/")
+    url = body.get("base_url", "https://api.burgerprints.com/v1").rstrip("/")
     import requests
     try:
         r = requests.get(f"{url}/authenticated", headers={"api-key": key}, timeout=20)

@@ -145,10 +145,65 @@ def make_variation(base: str, i: int) -> str:
     return f"{base}, {suffix}"
 
 
+def extract_freeform_scene(text: str) -> Optional[str]:
+    """Extract scene description from free-form text that lacks numbered/bulleted scenes.
+
+    Strips known prefixes (tạo mockup, cho sản phẩm, product ID) and uses
+    the remainder as a single scene prompt.
+    """
+    t = text.strip()
+    # Remove leading phrases
+    for pat in [
+        r"^hãy\s+tạo\s+mockup\s+(?:cho|với)\s+",
+        r"^tạo\s+mockup\s+(?:cho|với|từ)\s+",
+        r"^hãy\s+tạo\s+(?:ảnh|hình)\s+mockup\s+(?:cho|với|từ)\s+",
+        r"^(?:hãy\s+)?làm\s+mockup\s+(?:cho|với|từ)\s+",
+        r"^tạo\s+(?:ảnh|hình|ảnh\s+mockup)\s+cho\s+",
+        r"^(?:hãy\s+)?create\s+mockup\s+(?:for|with|from)\s+",
+        r"^(?:hãy\s+)?make\s+mockup\s+(?:for|with|from)\s+",
+    ]:
+        t = re.sub(pat, " ", t, count=1, flags=re.I)
+
+    # Remove product ID phrase — "sản phẩm A53636-35", "product A53636-35", "cho sản phẩm"
+    t = re.sub(
+        r"(?:sản phẩm|product|order|order_id|ID|id)?\s*(?:lấy|mã)?\s*A\d{4,}-\d{1,6}\s*(?:với|mà|cho|và|,)?",
+        "", t, flags=re.I
+    ).strip()
+    # Also just bare product ID
+    t = re.sub(r"\bA\d{4,}-\d{1,6}\b", "", t).strip()
+
+    # Remove "Mockup ảnh vuông" style ending markers
+    t = re.sub(r"mockup\s+ảnh\s+(?:vuông|dọc|ngang|square|vertical|horizontal)", "", t, flags=re.I).strip()
+
+    t = re.sub(r"\s+", " ", t).strip()
+    t = t.strip(" .,;:\"'")
+
+    if len(t) < 5:
+        return None
+    return t
+
+
 def fill_missing_scenes(existing: List[SceneSchema], count: int, text: str, product_context: Optional[Dict[str, Any]] = None) -> List[SceneSchema]:
     scenes = list(existing)
     constraints = extract_global_constraints(text)
     used = {normalize_prompt(s.prompt) for s in scenes}
+
+    # Priority: extract freeform scene from user's input before auto library
+    freeform = extract_freeform_scene(text)
+    if freeform and count > len(scenes):
+        # Merge constraints into freeform prompt
+        prompt = freeform
+        if constraints:
+            c_str = ". ".join(c for c in constraints if c not in prompt.lower())
+            if c_str:
+                prompt = f"{prompt}. {c_str}"
+        s = SceneSchema(index=len(scenes) + 1, prompt=prompt, source="explicit", constraints=list(constraints))
+        norm = normalize_prompt(s.prompt)
+        if norm not in used:
+            scenes.append(s)
+            used.add(norm)
+
+    # Fallback to auto library if still short
     for candidate in AUTO_SCENE_LIBRARY:
         if len(scenes) >= count:
             break

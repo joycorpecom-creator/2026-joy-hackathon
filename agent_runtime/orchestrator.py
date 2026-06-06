@@ -33,6 +33,7 @@ class AgentOrchestrator:
 
     def process(self, message: str, session_id: str = "web") -> Dict[str, Any]:
         cid = str(session_id)
+        self._agent._current_chat_id = cid
         ctx = build_context(cid, message)
         plan = self._planner.plan(message, ctx)
 
@@ -132,8 +133,11 @@ class AgentOrchestrator:
 
     def _remember_result(self, cid: str, plan: AgentPlan, result: Dict[str, Any], user_msg: str):
         mem.record_turn(cid, user_msg, result.get("content", ""))
+        images = result.get("images") or []
+        first_image = images[0] if images and isinstance(images[0], dict) else {}
+        current_id = plan.order_id or (result.get("meta") or {}).get("product_id") or result.get("order_id") or first_image.get("product_id")
         mem.update_state(cid, {
-            "current_order_id": plan.order_id,
+            "current_order_id": current_id,
             "current_job_id": result.get("job_id"),
             "last_plan_id": plan.plan_id,
             "last_mockup_job": result if result.get("type") == "mockup" else None,
@@ -155,7 +159,7 @@ def plan_from_json(data: dict) -> AgentPlan:
     return AgentPlan(
         intent=data.get("intent"), confidence=data.get("confidence", 0),
         requires_confirmation=data.get("requires_confirmation", False), reason=data.get("reason", ""),
-        order_id=data.get("order_id"), batch_count=data.get("batch_count"), scenes=scenes,
+        order_id=data.get("order_id") or data.get("product_id"), batch_count=data.get("batch_count"), scenes=scenes,
         missing_fields=data.get("missing_fields", []), clarifying_question=data.get("clarifying_question"),
         tool_plan=steps, plan_id=data.get("plan_id"), session_id=data.get("session_id", ""),
         raw_message=data.get("raw_message", ""),

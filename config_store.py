@@ -10,7 +10,7 @@ ENV_PATH = ROOT / ".env"
 SETTINGS_PATH = ROOT / "settings.json"
 
 DEFAULTS = {
-    "burgerprints_base_url": "https://api.burgerprints.com/v2",
+    "burgerprints_base_url": "https://api.burgerprints.com/v1",
     "burgerprints_api_key": "",
     "telegram_bot_token": "",
     "telegram_allowed_chat_id": "",

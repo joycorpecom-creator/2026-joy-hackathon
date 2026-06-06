@@ -1,16 +1,9 @@
 """
-Plan Schema — structured plan types for JOY Mockup Agent V2.
+Plan Schema — product-only V1 runtime.
 """
+from typing import List, Optional
 
-from typing import Any, Dict, List, Optional
-
-# ── Intent taxonomy ──────────────────────────────────────────────
-
-INTENT_CREATE_BATCH = "create_mockup_batch"
-INTENT_CREATE_SINGLE = "create_mockup_single"
 INTENT_REFINE = "refine_mockup"
-INTENT_LIST_ORDERS = "list_orders"
-INTENT_ORDER_INFO = "get_order_info"
 INTENT_SYNC_LARK = "sync_lark"
 INTENT_LIST_SELLER_PRODUCTS = "list_seller_products"
 INTENT_GET_SELLER_PRODUCT = "get_seller_product"
@@ -23,14 +16,11 @@ INTENT_HELP = "help"
 INTENT_UNKNOWN = "unknown"
 
 ALL_INTENTS = [
-    INTENT_CREATE_BATCH, INTENT_CREATE_SINGLE, INTENT_REFINE,
-    INTENT_LIST_ORDERS, INTENT_ORDER_INFO, INTENT_SYNC_LARK,
+    INTENT_REFINE, INTENT_SYNC_LARK,
     INTENT_LIST_SELLER_PRODUCTS, INTENT_GET_SELLER_PRODUCT, INTENT_CREATE_FROM_SELLER_PRODUCT,
     INTENT_CONFIRM_PLAN, INTENT_EDIT_PLAN, INTENT_CANCEL,
     INTENT_GREETING, INTENT_HELP, INTENT_UNKNOWN,
 ]
-
-# ── Scene schema ─────────────────────────────────────────────────
 
 class SceneSchema:
     def __init__(self, index: int, prompt: str, source: str = "explicit",
@@ -39,7 +29,7 @@ class SceneSchema:
                  reference_image_id: Optional[str] = None):
         self.index = index
         self.prompt = prompt
-        self.source = source  # explicit | inferred | grouped | reference
+        self.source = source
         self.camera = camera
         self.lighting = lighting
         self.background = background
@@ -58,8 +48,6 @@ class SceneSchema:
             "reference_image_id": self.reference_image_id,
         }
 
-# ── Tool plan step ───────────────────────────────────────────────
-
 class ToolPlanStep:
     def __init__(self, step: int, tool: str, args: dict):
         self.step = step
@@ -68,8 +56,6 @@ class ToolPlanStep:
 
     def to_dict(self) -> dict:
         return {"step": self.step, "tool": self.tool, "args": self.args}
-
-# ── Plan ─────────────────────────────────────────────────────────
 
 class AgentPlan:
     def __init__(self,
@@ -90,7 +76,7 @@ class AgentPlan:
         self.confidence = confidence
         self.requires_confirmation = requires_confirmation
         self.reason = reason
-        self.order_id = order_id
+        self.order_id = order_id  # compatibility alias: stores product_id in product-only runtime
         self.batch_count = batch_count
         self.scenes = scenes or []
         self.missing_fields = missing_fields or []
@@ -99,7 +85,7 @@ class AgentPlan:
         self.plan_id = plan_id
         self.session_id = session_id
         self.raw_message = raw_message
-        self.status = "draft"  # draft, waiting_confirmation, confirmed, executing, completed, failed, cancelled
+        self.status = "draft"
 
     def to_dict(self) -> dict:
         return {
@@ -107,6 +93,7 @@ class AgentPlan:
             "confidence": self.confidence,
             "requires_confirmation": self.requires_confirmation,
             "reason": self.reason,
+            "product_id": self.order_id,
             "order_id": self.order_id,
             "batch_count": self.batch_count,
             "scenes": [s.to_dict() for s in self.scenes],
@@ -118,17 +105,10 @@ class AgentPlan:
             "status": self.status,
         }
 
-# ── Auto-confirm rules ──────────────────────────────────────────
-
-AUTO_CONFIRM_BATCH_LIMIT = 4  # batch_count >= 4 → require confirmation
+AUTO_CONFIRM_BATCH_LIMIT = 4
 
 def needs_confirmation(plan: AgentPlan) -> bool:
-    """Decide if plan needs user confirmation."""
-    # User explicitly said confirm → yes
-    # Batch >= 4 → yes
-    # Inferred scenes > 0 → yes
-    # All explicit AND batch < 4 → no (execute directly)
-    if plan.intent not in (INTENT_CREATE_BATCH, INTENT_CREATE_SINGLE, INTENT_CREATE_FROM_SELLER_PRODUCT):
+    if plan.intent != INTENT_CREATE_FROM_SELLER_PRODUCT:
         return False
     if (plan.batch_count or 1) >= AUTO_CONFIRM_BATCH_LIMIT:
         return True
@@ -138,11 +118,9 @@ def needs_confirmation(plan: AgentPlan) -> bool:
 
 
 def plan_display_text(plan: AgentPlan) -> str:
-    """Human-readable plan text for preview (Telegram/Web)."""
-    lines = [f"Dạ anh, em đã hiểu. Đây là plan dự kiến:"]
+    lines = ["Dạ anh, em đã hiểu. Đây là plan dự kiến:"]
     if plan.order_id:
-        label = "Product" if plan.intent == INTENT_CREATE_FROM_SELLER_PRODUCT else "Order"
-        lines.append(f"- {label}: {plan.order_id}")
+        lines.append(f"- Product: {plan.order_id}")
     count = plan.batch_count or len(plan.scenes)
     lines.append(f"- Số ảnh: {count}")
     if plan.scenes:

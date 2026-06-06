@@ -1,4 +1,3 @@
-import os
 import sys
 from pathlib import Path
 
@@ -7,69 +6,47 @@ sys.path.insert(0, str(ROOT))
 
 from agent_runtime.planner import deterministic_plan
 from agent_runtime.executor import Executor
-from agent_runtime.plan_schema import AgentPlan, ToolPlanStep, INTENT_ORDER_INFO, INTENT_LIST_ORDERS
+from agent_runtime.plan_schema import (
+    INTENT_CREATE_FROM_SELLER_PRODUCT,
+    INTENT_GET_SELLER_PRODUCT,
+    INTENT_LIST_SELLER_PRODUCTS,
+    INTENT_REFINE,
+)
 
 
-def test_bp_get_order_returns_full_normalized_fields():
-    """Simulated test: _format_order should render amount/state/product/short_code."""
+def test_product_mockup_plan_routes_to_seller_product():
+    plan = deterministic_plan("tạo 1 ảnh product A53636-28 phong cách cafe chạy luôn", {"session": {"id": "t"}})
+    assert plan.intent == INTENT_CREATE_FROM_SELLER_PRODUCT
+    assert plan.order_id == "A53636-28"
+    assert plan.tool_plan[0].tool == "create_mockup_from_seller_product"
+
+
+def test_product_info_plan():
+    plan = deterministic_plan("xem product A53636-28", {"session": {"id": "t"}})
+    assert plan.intent == INTENT_GET_SELLER_PRODUCT
+    assert plan.order_id == "A53636-28"
+
+
+def test_list_products_plan():
+    plan = deterministic_plan("lấy toàn bộ product", {"session": {"id": "t"}})
+    assert plan.intent == INTENT_LIST_SELLER_PRODUCTS
+
+
+def test_order_id_no_longer_routes_to_order_flow():
+    plan = deterministic_plan("lấy order_id A60992-14-5706485", {"session": {"id": "t"}})
+    assert plan.intent != "get_order_info"
+    assert plan.intent != "list_orders"
+
+
+def test_refine_uses_last_mockup_context():
+    ctx = {"session": {"id": "t", "current_order_id": "A53636-28"}, "last_mockup_job": {"images": [{"index": 1, "image_id": "img1"}]}}
+    plan = deterministic_plan("đổi cảnh ảnh vừa rồi sang beach sunset", ctx)
+    assert plan.intent == INTENT_REFINE
+    assert plan.order_id == "A53636-28"
+
+
+def test_format_seller_products():
     ex = Executor(agent=None)
-    data = {
-        "order_id": "A60992-14-5706485",
-        "state": "queued",
-        "amount": "24.99 USD",
-        "product": "Gildan 5000 T-Shirt - White - L",
-        "short_code": "USG5000",
-        "mockup_url": "https://example.com/mockup.png",
-        "design_url": "https://example.com/design.png",
-    }
-    text = ex._format_order(data)
-    assert "A60992-14-5706485" in text
-    assert "24.99" in text
-    assert "queued" in text
-    assert "USG5000" in text
-    assert "mockup" in text.lower() or "https" in text
-
-
-def test_format_orders_includes_mockup_url_when_present():
-    ex = Executor(agent=None)
-    data = {
-        "orders": [{
-            "id": "A1",
-            "product": "Mug",
-            "state": "paid",
-            "mockup_url": "https://m.com/1.png",
-        }]
-    }
-    text = ex._format_orders(data)
-    assert "A1" in text
-    assert "Mug" in text
-    # at minimum the order is listed
-    assert "lấy được" in text.lower()
-
-
-def test_extract_order_images_from_real_order_format():
-    ex = Executor(agent=None)
-    data = {
-        "order_id": "A1",
-        "mockup_url": "https://m.com/mockup.png",
-        "design_url": "https://m.com/design.png",
-    }
-    imgs = ex._extract_order_images(data)
-    assert len(imgs) == 2
-    assert imgs[0]["url"] == "https://m.com/mockup.png"
-
-
-def test_format_orders_resolves_product_from_line_items():
-    ex = Executor(agent=None)
-    data = {
-        "orders": [{
-            "id": "A1",
-            "product": "",
-            "state": "paid",
-            "line_items": [{"name": "Gildan 5000"}],
-            "items": [{"name": "Gildan 5000"}],
-        }]
-    }
-    text = ex._format_orders(data)
-    assert "A1" in text
-    assert "Gildan 5000" in text
+    text = ex._format_seller_products({"products": [{"id": "A53636-28", "title": "full print", "state": "active", "mockup_url": "https://x/img.jpg"}], "total": 1})
+    assert "A53636-28" in text
+    assert "full print" in text

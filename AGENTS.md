@@ -1,59 +1,44 @@
-# JOY Mockup Agent V2
+# JOY Mockup Agent — Product-only Runtime
+
+Read `HERMES_PROJECT_INDEX.md` first.
 
 ## Architecture
 
-```
+```txt
 User (Telegram / Web)
   ↓
 handle_message (core.py)
   ↓
 AgentOrchestrator.process()
-  ├── Context Builder → context rich with session/tools/state
-  ├── Planner → deterministic_plan (intent, scenes, tool_plan)
-  ├── Plan Validator → checks count, tools, dedupes scenes
-  ├── Confirm Gate → batch≥4 or inferred scenes → plan_preview
-  ├── Executor → runs tool_plan deterministically (no LLM per step)
-  ├── Verifier → checks count, duplicates, missing
-  └── Memory → saves plan, job, images, state
+  ├── Context Builder
+  ├── Planner — product-only deterministic routing
+  ├── Plan Validator
+  ├── Executor — deterministic tool calls
+  ├── Verifier
+  └── Memory
 ```
 
-## Files
+## Active tools
 
-| File | Role |
-|------|------|
-| `agent_runtime/registry.py` | Tool inventory (7 tools) + prompt helper |
-| `agent_runtime/plan_schema.py` | AgentPlan, SceneSchema, ToolPlanStep, intents |
-| `agent_runtime/planner.py` | Deterministic planner (no LLM) + Gemini fallback |
-| `agent_runtime/scene_expander.py` | Expand explicit/grouped/inferred scenes |
-| `agent_runtime/plan_validator.py` | Validate + auto-fix duplicates |
-| `agent_runtime/executor.py` | Run tool_plan, generate batch, retry missing |
-| `agent_runtime/verifier.py` | Verify count, duplicates, missing URLs |
-| `agent_runtime/context_builder.py` | Build context dict from session/memory/tools |
-| `agent_runtime/orchestrator.py` | Plan → Validate → Confirm → Execute → Verify → Memory |
+- `bs_list_seller_products`
+- `bs_get_seller_product`
+- `create_mockup_from_seller_product`
+- `refine_mockup`
+- `bp_authenticated`
+- `bp_balance`
 
-## API Endpoints
+## Rules
 
-| Endpoint | Function |
-|----------|----------|
-| `POST /api/chat` | Main chat (V2 orchestrator + legacy fallback) |
-| `POST /api/agent/plan` | Plan only, no execution |
-| `POST /api/agent/execute` | Execute pending plan |
-| `GET /api/tools` | Tool registry |
-| `GET /api/state/{session_id}` | Session state |
-| `GET /api/logs/agent` | Live logs |
+- Product-only: use seller product IDs like `A53636-28`.
+- No order APIs, no `/v2/order`, no old order tools.
+- Keep Vietnamese assistant style: “Dạ”, gọi user “anh”.
+- Preserve design integrity; never redraw user artwork unnecessarily.
+- After code edits run compile + smoke tests.
 
-## Scene Expansion
+## Verification
 
-Supports:
-- **Explicit list**: `ảnh 1: beach\nảnh 2: office`
-- **Grouped**: `2 ảnh nữ ở biển, 2 ảnh nam văn phòng, 1 ảnh tự chọn`
-- **Inferred fallback**: auto-fill from scene library if count not met
-- **Constraints**: global rules (black shirt, female model, readable text)
-- **Dedupe**: auto-rewrite if duplicate prompts detected
-
-## Confirmation Rules
-
-- batch_count >= 4 → preview plan, wait confirm
-- Inferred scenes > 0 → preview plan
-- All explicit + batch ≤ 3 → execute directly
-- User says "tạo luôn" / "không cần hỏi" → skip confirm
+```bash
+cd /root/joy-dnse
+.venv/bin/python -m py_compile agent_runtime/*.py agent.py burgerprints.py main.py core.py
+.venv/bin/pytest -q
+```

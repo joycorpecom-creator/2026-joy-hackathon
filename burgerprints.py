@@ -21,9 +21,9 @@ DEMO_MOCKUP_URL = "https://d1ud88wu9m1k4s.cloudfront.net/fulfill/mockup/2024/06/
 
 
 class BurgerPrintsClient:
-    """BurgerPrints API v2 client.
+    """BurgerPrints/BurgerShop v1 product client.
 
-    Docs source: https://api-docs.burgerprints.com/ (Postman collection)
+    Runtime focus: seller products via BurgerShop v1 public product API.
     Auth: header `api-key`.
     """
 
@@ -34,7 +34,7 @@ class BurgerPrintsClient:
         except Exception:
             cfg = {}
         self.api_key = (cfg.get("burgerprints_api_key") or os.getenv("BURGERPRINTS_API_KEY", "")).strip()
-        self.base_url = (cfg.get("burgerprints_base_url") or os.getenv("BURGERPRINTS_BASE_URL", "https://api.burgerprints.com/v2")).rstrip("/")
+        self.base_url = (cfg.get("burgerprints_base_url") or os.getenv("BURGERPRINTS_BASE_URL", "https://api.burgerprints.com/v1")).rstrip("/")
 
     def _headers(self) -> Dict[str, str]:
         if not self.api_key or "..." in self.api_key or "***" in self.api_key:
@@ -54,93 +54,16 @@ class BurgerPrintsClient:
             raise RuntimeError(payload)
         return payload
 
-    # Auth / account
+    # ── Auth / account ──
+
     def authenticated(self) -> Dict[str, Any]:
         return self._request("GET", "/authenticated")
 
     def balance(self) -> Dict[str, Any]:
         return self._request("GET", "/balance")
 
-    # Orders
-    def list_orders(
-        self,
-        *,
-        sandbox: Optional[bool] = None,
-        reference: str = "",
-        store_id: str = "",
-        state: str = "",
-        start_date: str = "",
-        end_date: str = "",
-        page: int = 1,
-        page_size: int = 10,
-    ) -> Dict[str, Any]:
-        params = {"page": page, "page_size": page_size}
-        if sandbox is not None:
-            params["sandbox"] = str(sandbox).lower()
-        if reference:
-            params["reference"] = reference
-        if store_id:
-            params["store_id"] = store_id
-        if state:
-            params["state"] = state
-        if start_date:
-            params["start_date"] = start_date
-        if end_date:
-            params["end_date"] = end_date
-        return self._request("GET", "/order", params=params)
+    # ── BurgerShop seller products (v1 public product API) ──
 
-    def get_order(self, order_id: str) -> Dict[str, Any]:
-        if order_id.upper().startswith("DEMO"):
-            print(f"BP DEMO FALLBACK order={order_id}", flush=True)
-            return self._demo_order(order_id)
-
-        # 1) Direct BurgerPrints order id path from docs.
-        try:
-            payload = self._request("GET", f"/order/{order_id}")
-            data = payload.get("data", payload) if isinstance(payload, dict) else payload
-            if isinstance(data, dict) and data:
-                return data
-        except Exception as e:
-            print(f"BP direct order miss: {e}", flush=True)
-
-        # 2) Seller-facing reference fallback, live then sandbox.
-        for sandbox in (False, True):
-            payload = self.list_orders(reference=order_id, sandbox=sandbox, page_size=10)
-            rows = self._rows(payload)
-            if rows:
-                return rows[0]
-        raise RuntimeError(f"Order not found via BurgerPrints API: {order_id}")
-
-    def tracking(self, order_id: str) -> Dict[str, Any]:
-        return self._request("GET", f"/order/{order_id}/tracking")
-
-    def cancel_order(self, order_id: str) -> Dict[str, Any]:
-        return self._request("PUT", f"/order/{order_id}/cancel")
-
-    def delete_order(self, order_id: str) -> Dict[str, Any]:
-        return self._request("DELETE", f"/order/{order_id}")
-
-    def charge_order(self, order_ids: List[str]) -> Dict[str, Any]:
-        return self._request("POST", "/order/charge", json={"order_ids": order_ids})
-
-    # Product/catalog
-    def products(self, page: int = 1, page_size: int = 10, search: str = "") -> Dict[str, Any]:
-        params = {"page": page, "page_size": page_size}
-        if search:
-            params["search"] = search
-        return self._request("GET", "/product", params=params)
-
-    def product(self, product_id_or_short_code: str) -> Dict[str, Any]:
-        code = (product_id_or_short_code or "").strip()
-        if not code:
-            raise RuntimeError("Missing BurgerPrints catalog short_code")
-        if code.isdigit():
-            raise RuntimeError(f"'{code}' is a product model fragment, not a BP catalog short_code. Search catalog first.")
-        if re.search(r"^A\d{4,}-", code, re.I):
-            raise RuntimeError(f"'{code}' looks like a seller dashboard product id, not a BP catalog short_code.")
-        return self._request("GET", f"/product/{code}")
-
-    # BurgerShop seller products (created products with design/mockup attached)
     def bs_products(self, page: int = 1, page_size: int = 10, search: str = "") -> Dict[str, Any]:
         params = {"page": page, "page_size": page_size}
         if search:
@@ -165,10 +88,11 @@ class BurgerPrintsClient:
         variants = data.get("variants") or []
         first_variant = variants[0] if variants and isinstance(variants[0], dict) else {}
         design = designs[0] if designs and isinstance(designs[0], dict) else {}
-        mockup = (mockups[0] if mockups and isinstance(mockups[0], dict) else {}) or (first_variant.get("mockup") if isinstance(first_variant.get("mockup"), dict) else {}) or data.get("mockup") or {}
-        design_url = design.get("src") or ""
-        mockup_url = mockup.get("src") or data.get("mockup_url") or ""
-        if not (mockup_url or design_url):
+        mockup = mockups[0] if mockups and isinstance(mockups[0], dict) else {}
+        design_url = design.get("src") or data.get("design_url") or data.get("mockup_url") or ""
+        mockup_url = (mockup.get("src") or first_variant.get("mockup_url")
+                      or data.get("mockup_url") or data.get("generated_mockup_url") or design_url)
+        if not (design_url and mockup_url):
             raise RuntimeError(f"Seller product has no design/mockup URL: {product_id}")
         return OrderAsset(
             order_id=product_id,
@@ -180,71 +104,11 @@ class BurgerPrintsClient:
             product_id=product_id,
         )
 
+    # ── Webhook ──
+
     def out_of_stock(self) -> Dict[str, Any]:
         return self._request("GET", "/product/outofstock")
 
     def add_webhook(self, end_point_url: str, is_active: bool = True) -> Dict[str, Any]:
         url = "https://api.burgerprints.com/notification/api/v1/public/fulfillment/notify/webhook"
         return self._request("POST", url, json={"end_point_url": end_point_url, "is_active": is_active})
-
-    # Helpers
-    def _rows(self, payload: Any) -> List[Dict[str, Any]]:
-        data = payload.get("data", payload) if isinstance(payload, dict) else payload
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict):
-            for key in ("data", "result", "items", "orders"):
-                if isinstance(data.get(key), list):
-                    return data[key]
-        return []
-
-    def extract_first_asset(self, order_id: str) -> OrderAsset:
-        data = self.get_order(order_id)
-        item = (data.get("items") or data.get("line_items") or [])[0]
-
-        designs = item.get("designs") or []
-        mockups = item.get("mockups") or []
-        design_url = (
-            (designs[0].get("src") if designs else None)
-            or item.get("design_front_url")
-            or item.get("design_url_front")
-            or item.get("design_url")
-        )
-        mockup_url = (
-            (mockups[0].get("src") if mockups else None)
-            or item.get("mockup_front_url")
-            or item.get("mockup_url_front")
-            or item.get("mockup_url")
-        )
-        if not design_url:
-            raise RuntimeError(f"Order has no design URL: {order_id}")
-
-        return OrderAsset(
-            order_id=order_id,
-            product_name=item.get("name") or item.get("product_name") or item.get("catalog_sku") or "Unknown product",
-            color_name=item.get("color_name") or item.get("color") or "Unknown",
-            color_hex=item.get("color_value") or item.get("color_hex") or "#ffffff",
-            design_url=design_url,
-            mockup_url=mockup_url,
-            product_id=item.get("product_id") or item.get("catalog_sku") or item.get("short_code"),
-        )
-
-    def find_order_id(self, text: str) -> str:
-        m = re.search(r"(?:order\s*)?(DEMO[-_]?\d+|BP[-_]?\d+|ORD[-_]?\d+|A\d{4,}-[A-Z]{2}-\d+)", text, re.I)
-        if m:
-            return m.group(1)
-        # No loose fallback. Product names/codes like Gildan 5000 must not become orders.
-        return ""
-
-    def _demo_order(self, order_id: str) -> Dict[str, Any]:
-        return {
-            "id": order_id,
-            "items": [{
-                "name": "Unisex T-shirt | Gildan 5000 (US Label) - Black - S",
-                "product_id": "USG5000",
-                "color_value": "#25282A",
-                "color_name": "Black",
-                "designs": [{"type": "front", "src": DEMO_DESIGN_URL, "resolution": "4200x4800"}],
-                "mockups": [{"type": "front", "src": DEMO_MOCKUP_URL}],
-            }],
-        }

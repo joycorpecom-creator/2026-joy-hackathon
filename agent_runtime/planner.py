@@ -1,8 +1,6 @@
 """
-Planner — reason first, no tool execution.
-Produces structured AgentPlan from natural language + context + tool inventory.
+Planner — product-only V1 runtime. No order_id flows.
 """
-
 import json
 import re
 import uuid
@@ -12,45 +10,22 @@ from google import genai
 from config_store import load_settings
 from .plan_schema import (
     AgentPlan, SceneSchema, ToolPlanStep,
-    INTENT_CREATE_BATCH, INTENT_CREATE_SINGLE, INTENT_REFINE,
-    INTENT_LIST_ORDERS, INTENT_ORDER_INFO, INTENT_SYNC_LARK,
+    INTENT_REFINE, INTENT_SYNC_LARK,
     INTENT_CONFIRM_PLAN, INTENT_EDIT_PLAN, INTENT_CANCEL,
     INTENT_GREETING, INTENT_HELP, INTENT_UNKNOWN,
     INTENT_LIST_SELLER_PRODUCTS, INTENT_GET_SELLER_PRODUCT, INTENT_CREATE_FROM_SELLER_PRODUCT,
 )
-from .scene_expander import extract_order_ids, extract_count, expand_scenes
+from .scene_expander import extract_count, expand_scenes
 from .registry import tool_inventory_for_prompt
 
 CONFIRM_WORDS = ["ok", "oke", "okay", "đồng ý", "tạo đi", "tạo luôn", "chạy đi", "confirm", "yes"]
 EXECUTE_NOW_WORDS = ["tạo luôn", "chạy luôn", "không cần hỏi", "khỏi hỏi", "execute now"]
 
 PLANNER_SYSTEM = """
-You are JOY Mockup Planner.
-You DO NOT execute tools. You only analyze user request and output valid JSON plan.
-
-Rules:
-1. Always inspect session context and available tools.
-2. Identify intent.
-3. Resolve order_id from message or session.current_order_id.
-4. Resolve image references like "ảnh 2" from last_mockup_job.images.
-5. For batch_count >= 4, requires_confirmation=true unless user explicitly says execute now.
-6. If scenes are vague/grouped, expand into concrete diverse scenes.
-7. If required info missing, set missing_fields and clarifying_question.
-8. Output JSON only, no markdown.
-
-JSON shape:
-{
-  "intent": "create_mockup_batch|create_mockup_single|refine_mockup|list_orders|get_order_info|sync_lark|confirm_plan|edit_plan|cancel|greeting|help|unknown",
-  "confidence": 0.0,
-  "requires_confirmation": true,
-  "reason": "short reason",
-  "order_id": "... or null",
-  "batch_count": 5,
-  "scenes": [{"index":1,"prompt":"...","source":"explicit|grouped|inferred|reference","camera":"","lighting":"","background":"","constraints":[],"reference_image_id":null}],
-  "missing_fields": [],
-  "clarifying_question": null,
-  "tool_plan": [{"step":1,"tool":"get_order_info","args":{"order_id":"..."}}]
-}
+You are JOY Mockup Planner. Product-only runtime.
+Only use seller product IDs like A53636-28 via BurgerShop v1 product API.
+Do not plan order_id/order/list-order/order-info actions.
+Output JSON only.
 """
 
 
@@ -69,18 +44,7 @@ def _has_mockup_intent(text: str) -> bool:
     return any(k in t for k in ["tạo", "mockup", "ảnh", "hình", "lifestyle", "phong cách", "scene", "bối cảnh"])
 
 
-def _has_order_info_intent(text: str) -> bool:
-    t = text.lower()
-    return any(k in t for k in ["thông tin order", "xem order", "order info", "chi tiết order", "lấy order"])
-
-
-def _has_list_order_intent(text: str) -> bool:
-    t = text.lower()
-    return any(k in t for k in ["danh sách order", "toàn bộ order", "tất cả order", "order id", "order_id", "đơn hàng gần đây"])
-
-
 def extract_seller_product_ids(text: str) -> list:
-    # Seller product id: A28237-875, A60992-14. Excludes order id A60992-14-5706485.
     ids = []
     for m in re.finditer(r"\b(A\d{4,}-\d{1,6})(?!-)\b", text or "", re.I):
         ids.append(m.group(1).upper())
@@ -89,17 +53,24 @@ def extract_seller_product_ids(text: str) -> list:
 
 def _has_list_product_intent(text: str) -> bool:
     t = text.lower()
-    return any(k in t for k in ["tất cả product", "toàn bộ product", "danh sách product", "list product", "lấy product", "sản phẩm đã add", "product đã add"])
+    return any(k in t for k in [
+        "tất cả product", "toàn bộ product", "danh sách product", "list product", "lấy product",
+        "tất cả sản phẩm", "toàn bộ sản phẩm", "danh sách sản phẩm", "lấy sản phẩm", "lấy toàn bộ sản phẩm",
+        "sản phẩm đã add", "product đã add"
+    ])
 
 
 def _has_product_info_intent(text: str) -> bool:
     t = text.lower()
-    return any(k in t for k in ["thông tin product", "chi tiết product", "xem product", "product info", "seller product"])
+    return any(k in t for k in [
+        "thông tin product", "chi tiết product", "xem product", "product info", "seller product",
+        "thông tin sản phẩm", "chi tiết sản phẩm", "xem sản phẩm", "toàn bộ thông tin sản phẩm"
+    ])
 
 
 def _has_refine_intent(text: str) -> bool:
     t = text.lower()
-    return any(k in t for k in ["sửa ảnh", "đổi ảnh", "chỉnh ảnh", "refine", "làm lại ảnh", "giống ảnh", "ảnh 1", "ảnh 2", "ảnh 3", "ảnh 4", "ảnh 5"])
+    return any(k in t for k in ["sửa ảnh", "đổi ảnh", "đổi cảnh", "thay cảnh", "chỉnh ảnh", "refine", "làm lại ảnh", "giống ảnh", "ảnh 1", "ảnh 2", "ảnh 3", "ảnh 4", "ảnh 5", "ảnh vừa rồi"])
 
 
 def _image_ref(text: str, context: Dict[str, Any]) -> Optional[str]:
@@ -115,7 +86,6 @@ def _image_ref(text: str, context: Dict[str, Any]) -> Optional[str]:
 
 
 def deterministic_plan(message: str, context: Dict[str, Any]) -> AgentPlan:
-    """Reliable local planner for known business intents."""
     text = (message or "").strip()
     session_id = str(context.get("session", {}).get("id") or context.get("session_id") or "web")
     lower = text.lower()
@@ -130,74 +100,36 @@ def deterministic_plan(message: str, context: Dict[str, Any]) -> AgentPlan:
     if any(k in lower for k in ["bạn tên gì", "tên gì", "mày tên gì", "em tên gì", "who are you", "your name"]):
         return AgentPlan(intent=INTENT_HELP, confidence=0.9, reason="identity_question", plan_id=plan_id, session_id=session_id, raw_message=text)
 
-    order_ids = extract_order_ids(text)
-    current_order = (context.get("session") or {}).get("current_order_id") or context.get("current_order_id")
-    order_id = order_ids[0] if order_ids else current_order
     product_ids = extract_seller_product_ids(text)
+    current_product = (context.get("session") or {}).get("current_order_id") or context.get("current_product_id")
+    product_id = product_ids[0] if product_ids else current_product
 
-    # Seller product info / list
-    if _has_product_info_intent(text) and product_ids:
-        return AgentPlan(intent=INTENT_GET_SELLER_PRODUCT, confidence=0.93, order_id=product_ids[0], tool_plan=[ToolPlanStep(1, "bs_get_seller_product", {"product_id": product_ids[0]})], plan_id=plan_id, session_id=session_id, raw_message=text)
+    if _has_product_info_intent(text) and product_id:
+        return AgentPlan(intent=INTENT_GET_SELLER_PRODUCT, confidence=0.93, order_id=product_id, tool_plan=[ToolPlanStep(1, "bs_get_seller_product", {"product_id": product_id})], plan_id=plan_id, session_id=session_id, raw_message=text)
     if _has_list_product_intent(text):
         return AgentPlan(intent=INTENT_LIST_SELLER_PRODUCTS, confidence=0.91, tool_plan=[ToolPlanStep(1, "bs_list_seller_products", {})], plan_id=plan_id, session_id=session_id, raw_message=text)
 
-    # Mockup from seller product
-    if product_ids and _has_mockup_intent(text) and not order_id:
+    if _has_refine_intent(text):
+        image_id = _image_ref(text, context)
+        last_job = context.get("last_mockup_job") or {}
+        if image_id or last_job or product_id:
+            step = ToolPlanStep(1, "refine_mockup", {"image_id": image_id or "last_image", "instruction": text})
+            return AgentPlan(intent=INTENT_REFINE, confidence=0.88, order_id=product_id, tool_plan=[step], plan_id=plan_id, session_id=session_id, raw_message=text)
+
+    if product_id and _has_mockup_intent(text):
         count = extract_count(text) or 1
         scenes = expand_scenes(text, count=count)
         requires_confirmation = (count >= 4 or any(s.source != "explicit" for s in scenes)) and not _wants_execute_now(text)
-        tool_plan = [ToolPlanStep(1, "create_mockup_from_seller_product", {"product_id": product_ids[0], "scenes": [s.to_dict() for s in scenes]})]
-        return AgentPlan(intent=INTENT_CREATE_FROM_SELLER_PRODUCT, confidence=0.93, batch_count=count, scenes=scenes, order_id=product_ids[0], tool_plan=tool_plan, plan_id=plan_id, session_id=session_id, raw_message=text, requires_confirmation=requires_confirmation, reason="seller product mockup" if not requires_confirmation else "batch lớn hoặc có scene suy luận")
-
-    if _has_order_info_intent(text) and order_id:
-        return AgentPlan(intent=INTENT_ORDER_INFO, confidence=0.92, order_id=order_id, tool_plan=[ToolPlanStep(1, "get_order_info", {"order_id": order_id})], plan_id=plan_id, session_id=session_id, raw_message=text)
-
-    if _has_list_order_intent(text) and not _has_mockup_intent(text):
-        return AgentPlan(intent=INTENT_LIST_ORDERS, confidence=0.9, tool_plan=[ToolPlanStep(1, "list_orders", {})], plan_id=plan_id, session_id=session_id, raw_message=text)
-
-    if any(k in lower for k in ["sửa ảnh", "đổi ảnh", "chỉnh ảnh", "edit scene"]):
-        pending = context.get("pending_plan") or {}
-        if pending and pending.get("scenes"):
-            return AgentPlan(intent=INTENT_EDIT_PLAN, confidence=0.92, plan_id=plan_id, session_id=session_id, raw_message=text)
-
-    if _has_refine_intent(text) and not order_ids:
-        image_id = _image_ref(text, context)
-        if image_id:
-            step = ToolPlanStep(1, "refine_mockup", {"image_id": image_id, "instruction": text})
-            return AgentPlan(intent=INTENT_REFINE, confidence=0.88, tool_plan=[step], plan_id=plan_id, session_id=session_id, raw_message=text)
-
-    if _has_order_info_intent(text) and order_id:
-        return AgentPlan(intent=INTENT_ORDER_INFO, confidence=0.92, order_id=order_id, tool_plan=[ToolPlanStep(1, "get_order_info", {"order_id": order_id})], plan_id=plan_id, session_id=session_id, raw_message=text)
+        tool_plan = [ToolPlanStep(1, "create_mockup_from_seller_product", {"product_id": product_id, "scenes": [s.to_dict() for s in scenes]})]
+        return AgentPlan(intent=INTENT_CREATE_FROM_SELLER_PRODUCT, confidence=0.93, batch_count=count, scenes=scenes, order_id=product_id, tool_plan=tool_plan, plan_id=plan_id, session_id=session_id, raw_message=text, requires_confirmation=requires_confirmation, reason="seller product mockup" if not requires_confirmation else "batch lớn hoặc có scene suy luận")
 
     if _has_mockup_intent(text):
-        count = extract_count(text) or 1
-        if not order_id:
-            return AgentPlan(
-                intent=INTENT_CREATE_BATCH if count > 1 else INTENT_CREATE_SINGLE,
-                confidence=0.86,
-                batch_count=count,
-                missing_fields=["order_id"],
-                clarifying_question="Dạ anh gửi giúp em order_id cần tạo mockup.",
-                plan_id=plan_id,
-                session_id=session_id,
-                raw_message=text,
-            )
-        scenes = expand_scenes(text, count=count)
-        intent = INTENT_CREATE_BATCH if count > 1 else INTENT_CREATE_SINGLE
-        requires_confirmation = (count >= 4 or any(s.source != "explicit" for s in scenes)) and not _wants_execute_now(text)
-        tool_plan = [
-            ToolPlanStep(1, "get_order_info", {"order_id": order_id}),
-            ToolPlanStep(2, "create_mockup_batch", {"order_id": order_id, "scenes": [s.to_dict() for s in scenes]}),
-        ]
         return AgentPlan(
-            intent=intent,
-            confidence=0.93,
-            requires_confirmation=requires_confirmation,
-            reason="batch lớn hoặc có scene suy luận" if requires_confirmation else "request đủ rõ để execute",
-            order_id=order_id,
-            batch_count=count,
-            scenes=scenes,
-            tool_plan=tool_plan,
+            intent=INTENT_CREATE_FROM_SELLER_PRODUCT,
+            confidence=0.86,
+            batch_count=extract_count(text) or 1,
+            missing_fields=["product_id"],
+            clarifying_question="Dạ anh gửi giúp em product_id dạng A53636-28 để tạo mockup.",
             plan_id=plan_id,
             session_id=session_id,
             raw_message=text,
@@ -219,25 +151,15 @@ class Planner:
         return self._client
 
     def plan(self, message: str, context: Dict[str, Any], use_llm: bool = False) -> AgentPlan:
-        # deterministic planner is primary; LLM planner can be enabled later.
-        plan = deterministic_plan(message, context)
-        return plan
+        return deterministic_plan(message, context)
 
     def plan_with_llm(self, message: str, context: Dict[str, Any]) -> AgentPlan:
-        """Optional LLM planner. Kept isolated; deterministic fallback always available."""
         try:
             client = self._client_obj()
             if not client:
                 return deterministic_plan(message, context)
-            prompt = {
-                "user_message": message,
-                "context": context,
-                "tool_inventory": tool_inventory_for_prompt(),
-            }
-            resp = client.models.generate_content(
-                model=self.model,
-                contents=PLANNER_SYSTEM + "\n\nINPUT JSON:\n" + json.dumps(prompt, ensure_ascii=False, default=str),
-            )
+            prompt = {"user_message": message, "context": context, "tool_inventory": tool_inventory_for_prompt()}
+            resp = client.models.generate_content(model=self.model, contents=PLANNER_SYSTEM + "\n\nINPUT JSON:\n" + json.dumps(prompt, ensure_ascii=False, default=str))
             txt = (resp.text or "").strip()
             txt = re.sub(r"^```json|```$", "", txt, flags=re.I | re.M).strip()
             data = json.loads(txt)
@@ -248,29 +170,7 @@ class Planner:
 
 def plan_from_dict(data: Dict[str, Any], message: str, context: Dict[str, Any]) -> AgentPlan:
     session_id = str(context.get("session", {}).get("id") or context.get("session_id") or "web")
-    scenes = [SceneSchema(
-        index=int(s.get("index") or i + 1),
-        prompt=str(s.get("prompt") or ""),
-        source=str(s.get("source") or "explicit"),
-        camera=str(s.get("camera") or ""),
-        lighting=str(s.get("lighting") or ""),
-        background=str(s.get("background") or ""),
-        constraints=list(s.get("constraints") or []),
-        reference_image_id=s.get("reference_image_id"),
-    ) for i, s in enumerate(data.get("scenes") or [])]
+    scenes = [SceneSchema(index=int(s.get("index") or i + 1), prompt=str(s.get("prompt") or ""), source=str(s.get("source") or "explicit"), camera=str(s.get("camera") or ""), lighting=str(s.get("lighting") or ""), background=str(s.get("background") or ""), constraints=list(s.get("constraints") or []), reference_image_id=s.get("reference_image_id")) for i, s in enumerate(data.get("scenes") or [])]
     steps = [ToolPlanStep(int(st.get("step") or i + 1), st.get("tool"), st.get("args") or {}) for i, st in enumerate(data.get("tool_plan") or [])]
-    return AgentPlan(
-        intent=data.get("intent") or INTENT_UNKNOWN,
-        confidence=float(data.get("confidence") or 0),
-        requires_confirmation=bool(data.get("requires_confirmation")),
-        reason=data.get("reason") or "",
-        order_id=data.get("order_id"),
-        batch_count=data.get("batch_count"),
-        scenes=scenes,
-        missing_fields=list(data.get("missing_fields") or []),
-        clarifying_question=data.get("clarifying_question"),
-        tool_plan=steps,
-        plan_id=data.get("plan_id") or f"plan_{uuid.uuid4().hex[:12]}",
-        session_id=session_id,
-        raw_message=message,
-    )
+    product_id = data.get("product_id") or data.get("order_id")
+    return AgentPlan(intent=data.get("intent") or INTENT_UNKNOWN, confidence=float(data.get("confidence") or 0), requires_confirmation=bool(data.get("requires_confirmation")), reason=data.get("reason") or "", order_id=product_id, batch_count=data.get("batch_count"), scenes=scenes, missing_fields=list(data.get("missing_fields") or []), clarifying_question=data.get("clarifying_question"), tool_plan=steps, plan_id=data.get("plan_id") or f"plan_{uuid.uuid4().hex[:12]}", session_id=session_id, raw_message=message)
