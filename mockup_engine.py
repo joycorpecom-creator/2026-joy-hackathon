@@ -33,6 +33,7 @@ def build_reasoned_image_prompt(
     try:
         from agent_runtime.image_brief_planner import plan_image_brief, build_fallback_image_brief
         from agent_runtime.image_prompt_compiler import compile_image_prompt
+        from agent_runtime.prompt_quality import score_prompt
 
         brief = plan_image_brief(
             user_scene=user_scene,
@@ -59,7 +60,8 @@ def build_reasoned_image_prompt(
             color=color,
             user_scene=user_scene,
         )
-        return final_prompt, {"source": source, "brief": brief}
+        qa = score_prompt(final_prompt)
+        return final_prompt, {"source": source, "brief": brief, "qa_score": qa["overall"], "qa_risk": qa["risk"], "qa_missing": qa.get("missing", [])}
     except Exception as e:
         print(f"Reasoned prompt build error: {e}", flush=True)
         return "", {"source": "legacy_fallback", "error": str(e)}

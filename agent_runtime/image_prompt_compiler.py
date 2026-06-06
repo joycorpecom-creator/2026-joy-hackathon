@@ -9,6 +9,18 @@ No AI calls — pure string templating based on the brief JSON fields.
 
 from typing import Any, Dict, List
 
+from agent_runtime.prompt_library import (
+    COMMERCIAL_INTENTS,
+    NEGATIVE_CONSTRAINTS,
+    PERSONAS,
+    PRESERVATION_CONTRACT,
+    SHOT_TYPES,
+    resolve_commercial_intent,
+    resolve_persona,
+    resolve_shot_type,
+)
+from agent_runtime.prompt_quality import append_prompt_qa_contract, score_prompt
+
 
 # ── Builders ──────────────────────────────────────────────────────
 
@@ -44,45 +56,50 @@ def _build_negative_block(negatives: List[str]) -> str:
 
 # ── Main compiler ────────────────────────────────────────────────
 
-_COMPILED_PROMPT_TEMPLATE = """ROLE:
-You are a top-tier ecommerce lifestyle photographer and POD mockup creative director. Create the exact scene described below using the attached product reference image.
+_COMPILED_PROMPT_TEMPLATE = """[ROLE & ASSIGNMENT]
+You are a top-tier ecommerce lifestyle photographer and POD mockup creative director.
+Create the exact scene described below using the attached product reference image.
+Shot type: {shot_type} — {shot_type_desc}
+Commercial use: {commercial_intent_desc}
 
-REFERENCE IMAGE:
-The attached image is the exact BurgerPrints product reference. This is the ONLY source of truth for product appearance, color, print/design placement, and proportions. Preserve it 100%.
+{preservation_contract}
 
-PRODUCT:
+[PRODUCT]
 - Name: {product_name}
 - Type: {product_type_category}
 - Color: {color}
 
-TARGET AUDIENCE:
+[TARGET AUDIENCE]
 {audience}
 
-CREATIVE BRIEF:
+[CREATIVE BRIEF]
 - Direction: {creative_direction}
 - Model: {model_description}
 - Model age: {model_age} years old
 - Ethnic representation: {model_ethnicity}
+- Persona direction: {persona_description}
 
-SCENE {scene_index}:
+[SCENE {scene_index}]
 {scene_block}
 
-PHOTOGRAPHY:
+[PHOTOGRAPHY]
 {scene_camera}
 {scene_lighting}
 {scene_composition}
 
-PRESERVATION RULES (MUST follow):
+[PRESERVATION RULES FROM BRIEF]
 {preservation_rules}
 
 {preservation_extra}
 
-QUALITY DIRECTIVE:
+[QUALITY DIRECTIVE]
 Photorealistic RAW commercial photography quality. Impossible to distinguish from real photography. Visible skin texture, subtle skin oil reflection, authentic skin imperfections, realistic hair strands, natural facial asymmetry, realistic eyelashes. True-to-life color rendering. No AI plastic look. Marketplace-ready composition.
 
 {negative_block}
 
-FINAL TOP-1 EXPERT DIRECTIVE:
+{negative_constraints}
+
+[FINAL TOP-1 EXPERT DIRECTIVE]
 Create a premium POD commercial mockup that looks like a real top-tier advertising photo from a professional shoot, not a generic AI image. The result must be usable directly for Etsy/Amazon/Shopify listing and ads.
 """
 
@@ -129,14 +146,21 @@ def compile_image_prompt(
     # Build preservation extra sentence
     preservation_extra = (
         "No redesign, no new logos, no text changes. "
-        "Product must be hero subject, fully visible, undistorted."
+        "Product must be hero subject, fully visible, undistorted. "
+        "Only environment, lighting, model pose, and camera angle may change."
     )
 
     # Type + category description
     category = brief.get("product_category", "")
     product_type_category = f"{product_type} ({category})" if category else product_type
 
-    return _COMPILED_PROMPT_TEMPLATE.format(
+    shot_type = brief.get("shot_type") or resolve_shot_type(user_scene or scene.get("concept", ""))
+    shot_type_desc = SHOT_TYPES.get(shot_type, SHOT_TYPES["lifestyle model shot"])
+    intent_key = brief.get("commercial_intent") or resolve_commercial_intent(user_scene or brief.get("creative_direction", ""))
+    commercial_intent_desc = COMMERCIAL_INTENTS.get(intent_key, COMMERCIAL_INTENTS["shopify product gallery"])
+    persona = resolve_persona(user_scene or scene.get("concept", ""))
+
+    prompt = _COMPILED_PROMPT_TEMPLATE.format(
         product_name=product_name or "product",
         product_type_category=product_type_category,
         color=color or "as shown in reference",
@@ -145,6 +169,11 @@ def compile_image_prompt(
         model_description=_build_model_description(model),
         model_age=model.get("age_range", "24-50"),
         model_ethnicity=model.get("ethnicity", "diverse"),
+        persona_description=persona.get("description", PERSONAS["default"]["description"]),
+        shot_type=shot_type,
+        shot_type_desc=shot_type_desc,
+        commercial_intent_desc=commercial_intent_desc,
+        preservation_contract=PRESERVATION_CONTRACT,
         scene_index=scene.get("scene_id", scene_idx + 1),
         scene_block=scene_block,
         scene_camera=scene.get("camera", "professional camera"),
@@ -153,4 +182,6 @@ def compile_image_prompt(
         preservation_rules=preservation_lines,
         preservation_extra=preservation_extra,
         negative_block=negative_block,
+        negative_constraints=NEGATIVE_CONSTRAINTS,
     )
+    return append_prompt_qa_contract(prompt)
