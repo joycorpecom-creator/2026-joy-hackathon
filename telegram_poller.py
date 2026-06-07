@@ -54,18 +54,12 @@ def send_photo_url(token: str, chat_id: int, url: str, caption: str):
 
 
 def allowed_chat(token: str, chat_id: int, allowed: str) -> bool:
-    """Allow empty, bot-id fallback, or comma-separated chat IDs.
-
-    Supports DM + group simultaneously, e.g.:
-    telegram_allowed_chat_id = "7509216951,-5164583092"
-    """
     if not allowed:
         return True
     bot_id = token.split(":", 1)[0]
-    allowed_set = {part.strip() for part in str(allowed).split(",") if part.strip()}
-    if bot_id in allowed_set:
+    if allowed == bot_id:
         return True  # common config mistake: bot id used as chat id; don't block
-    return str(chat_id) in allowed_set
+    return str(chat_id) == allowed
 
 
 
